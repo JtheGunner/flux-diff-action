@@ -1,0 +1,12 @@
+# Binaries
+/flux-diff
+/bin/
+*.exe
+*.test
+
+# Release artifacts
+/dist/
+
+# Coverage output
+*.out
+coverage.*
