@@ -1,0 +1,25 @@
+# SHA-256 checksums of the flate release archives that `flux-diff fetch-flate`
+# accepts. One line per asset:
+#
+#   <version> <os> <arch> <sha256> <asset file name>
+#
+# Every version in flate.PinnedVersion must have a line for linux and darwin on
+# amd64 and arm64. A download whose digest differs is rejected before anything
+# is extracted.
+#
+# How to fill in or refresh the values (maintainer, needs the gh CLI):
+#   1. gh release view <version> -R home-operations/flate --json assets
+#      lists the archive names and their *.sha256 assets.
+#   2. gh release download <version> -R home-operations/flate --pattern '*.sha256'
+#      fetches the published digests.
+#   3. Cross-check each digest against a second source: download the archive
+#      itself and run `shasum -a 256` on it, and compare with the digest in the
+#      release's checksums file.
+#
+# PLACEHOLDER: the digests below are all zeros and the asset names are not yet
+# verified against the release. They match no real archive, so every download
+# is rejected (fail closed) until real values replace them.
+v0.7.3 linux amd64 0000000000000000000000000000000000000000000000000000000000000000 flate_0.7.3_linux_amd64.tar.gz
+v0.7.3 linux arm64 0000000000000000000000000000000000000000000000000000000000000000 flate_0.7.3_linux_arm64.tar.gz
+v0.7.3 darwin amd64 0000000000000000000000000000000000000000000000000000000000000000 flate_0.7.3_darwin_amd64.tar.gz
+v0.7.3 darwin arm64 0000000000000000000000000000000000000000000000000000000000000000 flate_0.7.3_darwin_arm64.tar.gz
