@@ -14,6 +14,22 @@ import (
 	"testing"
 )
 
+const botLogin = "github-actions[bot]"
+
+func botComment(id int64, body string) comment {
+	c := comment{ID: id, Body: body}
+	c.User.Login, c.User.Type = botLogin, "Bot"
+
+	return c
+}
+
+func userComment(id int64, body, login string) comment {
+	c := comment{ID: id, Body: body}
+	c.User.Login, c.User.Type = login, "User"
+
+	return c
+}
+
 const (
 	fakeToken = "ghs_FAKE-DO-NOT-USE-token"
 	marker    = "<!-- flux-diff -->"
@@ -26,6 +42,8 @@ type fakeGitHub struct {
 	nextID   int64
 	// writeStatus, when non-zero, answers POST and PATCH with that status.
 	writeStatus int
+	// userLogin is answered by GET /user; empty means 403 like GITHUB_TOKEN.
+	userLogin   string
 	requests    []string
 	authHeaders []string
 }
@@ -38,6 +56,13 @@ func (f *fakeGitHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	f.authHeaders = append(f.authHeaders, r.Header.Get("Authorization"))
 
 	switch {
+	case r.Method == http.MethodGet && r.URL.Path == "/user":
+		if f.userLogin == "" {
+			w.WriteHeader(http.StatusForbidden)
+
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]string{"login": f.userLogin})
 	case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/comments"):
 		f.list(w, r)
 	case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/comments"):
@@ -76,7 +101,7 @@ func (f *fakeGitHub) write(w http.ResponseWriter, r *http.Request, id int64) {
 	if id == 0 {
 		f.nextID++
 		id = 1000 + f.nextID
-		f.comments = append(f.comments, comment{ID: id, Body: in.Body})
+		f.comments = append(f.comments, botComment(id, in.Body))
 		w.WriteHeader(http.StatusCreated)
 	} else {
 		for i := range f.comments {
@@ -127,7 +152,7 @@ func TestUpsert_UpdatesExistingMarkerComment(t *testing.T) {
 	for i := 1; i <= pageSize; i++ {
 		fake.comments = append(fake.comments, comment{ID: int64(i), Body: "noise"})
 	}
-	fake.comments = append(fake.comments, comment{ID: 500, Body: marker + "\nold"})
+	fake.comments = append(fake.comments, botComment(500, marker+"\nold"))
 	cfg := newConfig(t, fake)
 
 	result, err := Upsert(context.Background(), cfg, 5, marker, marker+"\nnew")
@@ -212,6 +237,58 @@ func TestUpsert_BodyOverLimit_UsesTruncatedBodyAndUploadsFullArtifact(t *testing
 	}
 	if !strings.HasPrefix(posted, marker) || !strings.Contains(posted, "truncated") {
 		t.Errorf("posted body lost the marker or the notice: %q", posted)
+	}
+}
+
+func TestUpsert_IgnoresForeignMarkerComments(t *testing.T) {
+	foreign := []comment{
+		userComment(7, marker+"\nspoofed", "mallory"),
+		// A bot login without the Bot type is a normal user account.
+		userComment(8, marker+"\nspoofed", botLogin),
+		botComment(9, "quoted: "+marker),
+	}
+	fake := &fakeGitHub{comments: append([]comment(nil), foreign...)}
+	cfg := newConfig(t, fake)
+
+	result, err := Upsert(context.Background(), cfg, 5, marker, marker+"\nmine")
+	if err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+	if result.Outcome != Created {
+		t.Fatalf("outcome = %s, want a new own comment", result.Outcome)
+	}
+	for i, c := range foreign {
+		if fake.comments[i].Body != c.Body {
+			t.Errorf("foreign comment %d was modified", c.ID)
+		}
+	}
+
+	again, err := Upsert(context.Background(), cfg, 5, marker, marker+"\nmine v2")
+	if err != nil || again.Outcome != Updated || again.CommentID != result.CommentID {
+		t.Errorf("second run = %+v, %v; want an update of the own comment", again, err)
+	}
+}
+
+func TestUpsert_AcceptsTokenIdentityFromUserEndpoint(t *testing.T) {
+	fake := &fakeGitHub{userLogin: "flux-bot", comments: []comment{userComment(3, marker+"\nold", "flux-bot")}}
+	cfg := newConfig(t, fake)
+
+	result, err := Upsert(context.Background(), cfg, 5, marker, marker+"\nnew")
+	if err != nil || result.Outcome != Updated || result.CommentID != 3 {
+		t.Fatalf("result = %+v, %v", result, err)
+	}
+}
+
+func TestUpsert_ConfigurableAuthorLogin(t *testing.T) {
+	custom := botComment(4, marker+"\nold")
+	custom.User.Login = "custom[bot]"
+	fake := &fakeGitHub{comments: []comment{custom}}
+	cfg := newConfig(t, fake)
+	cfg.AuthorLogin = "custom[bot]"
+
+	result, err := Upsert(context.Background(), cfg, 5, marker, marker+"\nnew")
+	if err != nil || result.Outcome != Updated {
+		t.Fatalf("result = %+v, %v", result, err)
 	}
 }
 

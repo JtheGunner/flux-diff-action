@@ -58,6 +58,10 @@ type Config struct {
 	// MaxSize is the maximum body length in characters; DefaultMaxSize when
 	// zero or negative.
 	MaxSize int
+	// AuthorLogin is the bot login whose comments may be updated;
+	// DefaultAuthorLogin when empty. The login that GET /user returns for the
+	// token is accepted as well, when the token may call it.
+	AuthorLogin string
 	// Fork skips the API entirely: fork PRs get a read-only token.
 	Fork bool
 	// StepSummaryPath is the file ($GITHUB_STEP_SUMMARY) that receives the
@@ -88,9 +92,18 @@ func (e *StatusError) Error() string {
 	return fmt.Sprintf("GitHub API %s request failed with status %d", e.Method, e.Status)
 }
 
+// DefaultAuthorLogin is the identity of the workflow GITHUB_TOKEN.
+const DefaultAuthorLogin = "github-actions[bot]"
+
+const botUserType = "Bot"
+
 type comment struct {
 	ID   int64  `json:"id"`
 	Body string `json:"body"`
+	User struct {
+		Login string `json:"login"`
+		Type  string `json:"type"`
+	} `json:"user"`
 }
 
 // Upsert creates the comment on pull request pr, or updates the existing
@@ -233,7 +246,45 @@ func isLoopback(host string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
+// ownLogin asks the API who the token belongs to. A token that may not call
+// GET /user (the workflow GITHUB_TOKEN) yields "" and only the configured bot
+// login is accepted.
+func (a *api) ownLogin(ctx context.Context) (string, error) {
+	var user struct {
+		Login string `json:"login"`
+	}
+	if err := a.do(ctx, http.MethodGet, "/user", nil, &user); err != nil {
+		var status *StatusError
+		if errors.As(err, &status) && status.Status >= 400 && status.Status < 500 {
+			return "", nil
+		}
+
+		return "", err
+	}
+
+	return user.Login, nil
+}
+
+// isOwn reports whether the comment was written by the token's identity, so a
+// foreign comment that merely carries the marker is never edited.
+func (c comment) isOwn(botLogin, tokenLogin string) bool {
+	if c.User.Login == "" {
+		return false
+	}
+
+	return (c.User.Login == botLogin && c.User.Type == botUserType) || c.User.Login == tokenLogin
+}
+
 func (a *api) findMarkerComment(ctx context.Context, pr int, marker string) (*comment, error) {
+	botLogin := a.cfg.AuthorLogin
+	if botLogin == "" {
+		botLogin = DefaultAuthorLogin
+	}
+	tokenLogin, err := a.ownLogin(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	for page := 1; page <= maxPages; page++ {
 		path := fmt.Sprintf("/repos/%s/issues/%d/comments?per_page=%d&page=%d", a.cfg.Repository, pr, pageSize, page)
 
@@ -242,7 +293,7 @@ func (a *api) findMarkerComment(ctx context.Context, pr int, marker string) (*co
 			return nil, err
 		}
 		for i := range comments {
-			if strings.Contains(comments[i].Body, marker) {
+			if strings.HasPrefix(comments[i].Body, marker) && comments[i].isOwn(botLogin, tokenLogin) {
 				return &comments[i], nil
 			}
 		}

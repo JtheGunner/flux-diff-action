@@ -180,6 +180,11 @@ func TestCLI_Comment_CreatesCommentAndNeverPrintsToken(t *testing.T) {
 
 			return
 		}
+		if r.URL.Path == "/user" {
+			w.WriteHeader(http.StatusForbidden)
+
+			return
+		}
 		if r.Method == http.MethodGet {
 			_, _ = io.WriteString(w, "[]")
 
