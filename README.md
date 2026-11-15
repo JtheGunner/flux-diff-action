@@ -235,6 +235,10 @@ Honest limits:
 - Only the working tree at `--path` is compared against `--base`; other head
   revisions are not supported yet.
 - flate versions are limited to those with a checksum built into flux-diff.
+- A unit that is broken in the same way in the base and the head revision (for
+  example a `spec.path` that never existed) is not reported: flate's diff only
+  compares the two sides. A unit that a pull request breaks, adds or deletes is
+  reported as `failed` with a reason.
 
 ---
 
