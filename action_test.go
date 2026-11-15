@@ -144,6 +144,7 @@ func commentLineWith(text, needle string) string {
 type stepRun struct {
 	exitCode int
 	stdout   string
+	stderr   string // only filled when the script failed
 	output   string // content of $GITHUB_OUTPUT
 	summary  string // content of $GITHUB_STEP_SUMMARY
 }
@@ -194,6 +195,7 @@ func runStep(t *testing.T, name string, stubExit int, env map[string]string) ste
 	switch {
 	case errors.As(err, &exitErr):
 		run.exitCode = exitErr.ExitCode()
+		run.stderr = string(exitErr.Stderr)
 	case err != nil:
 		t.Fatalf("run step %q: %v", name, err)
 	}
@@ -275,8 +277,9 @@ func TestAction_ReportResultRequiresTheDiffStepToHaveRun(t *testing.T) {
 		if step.Name != "Report result" {
 			continue
 		}
-		if !strings.Contains(step.If, "steps.diff.outputs.exit-code != ''") || !strings.Contains(step.If, "steps.diff.outputs.exit-code != '0'") {
-			t.Errorf("Report result runs without checking that the diff step produced an exit code: %q", step.If)
+		const want = "${{ !cancelled() && steps.diff.outputs.exit-code != '' && steps.diff.outputs.exit-code != '0' }}"
+		if step.If != want {
+			t.Errorf("Report result condition = %q, want %q", step.If, want)
 		}
 
 		return
@@ -367,10 +370,11 @@ func TestAction_InstallFluxDiffVerifiesTheChecksumBeforeExtracting(t *testing.T)
 		checksum   string
 		wantExit   int
 		wantBinary bool
+		wantReason string // text that must appear in the output of a failing run
 	}{
-		"good":     {"good", 0, true},
-		"tampered": {"tampered", 1, false},
-		"missing":  {"missing", 1, false},
+		"good":     {"good", 0, true, ""},
+		"tampered": {"tampered", 1, false, "FAILED"},
+		"missing":  {"missing", 1, false, "no checksum for"},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -380,6 +384,9 @@ func TestAction_InstallFluxDiffVerifiesTheChecksumBeforeExtracting(t *testing.T)
 
 			if run.exitCode != tc.wantExit {
 				t.Fatalf("exit = %d, want %d\n%s", run.exitCode, tc.wantExit, run.stdout)
+			}
+			if combined := run.stdout + run.stderr; !strings.Contains(combined, tc.wantReason) {
+				t.Errorf("output %q lacks the failure reason %q", combined, tc.wantReason)
 			}
 			_, err := os.Stat(filepath.Join(fixture.temp, "flux-diff-action", "bin", "flux-diff"))
 			if installed := err == nil; installed != tc.wantBinary {
