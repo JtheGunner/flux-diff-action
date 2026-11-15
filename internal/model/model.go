@@ -57,11 +57,23 @@ type Failure struct {
 	Reason    string
 }
 
+// Bounds for Result.Unparsed.
+const (
+	MaxUnparsedLines      = 50
+	MaxUnparsedLineLength = 300
+)
+
 // Result is the complete outcome of one flate run.
 type Result struct {
 	Changes    []Change
 	Suppressed []Change
 	Warnings   []Warning
 	Failures   []Failure
-	ExitCode   int
+	// Unparsed holds non-blank stderr lines that matched no known shape, plus
+	// notes when flate's reported counts differ from what was parsed. It keeps
+	// partial results from looking clean. Lines are bounded (MaxUnparsedLines,
+	// MaxUnparsedLineLength) but are raw flate output: mask them before any
+	// output sink.
+	Unparsed []string
+	ExitCode int
 }
