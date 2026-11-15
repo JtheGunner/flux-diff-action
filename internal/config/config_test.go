@@ -258,3 +258,22 @@ func TestLoad_SymlinkedConfigFileIsRejected(t *testing.T) {
 		}
 	}
 }
+
+func TestParse_ReadsBytesAndConfinesPathsToRoot(t *testing.T) {
+	root := t.TempDir()
+
+	cfg, err := Parse([]byte("kubeVersion: \"1.30.0\"\nmaskPatterns: [token]\n"), root)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if cfg.KubeVersion != "1.30.0" || len(cfg.MaskPatterns) != 1 {
+		t.Errorf("cfg = %+v", cfg)
+	}
+
+	if _, err := Parse([]byte("supply: [../outside]\n"), root); err == nil {
+		t.Error("Parse accepted a supply path outside the root")
+	}
+	if _, err := Parse([]byte("bogus: 1\n"), root); err == nil {
+		t.Error("Parse accepted an unknown key")
+	}
+}

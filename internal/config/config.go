@@ -100,6 +100,23 @@ func LoadRequired(path string) (Config, error) {
 	return cfg, nil
 }
 
+// Parse validates configuration bytes that did not come from a file on disk,
+// for example the version stored in a base revision. Relative paths resolve
+// against root, which must be an existing directory.
+func Parse(data []byte, root string) (Config, error) {
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return Config{}, fmt.Errorf("resolve configuration root: %w", err)
+	}
+
+	cfg, err := parse(data, absRoot)
+	if err != nil {
+		return Config{}, fmt.Errorf("invalid configuration: %w", err)
+	}
+
+	return cfg, nil
+}
+
 // parse validates the YAML by hand instead of decoding into a struct: the
 // decoder's type errors quote the offending value, and a configuration may
 // hold credential file paths that must never reach an error message.
