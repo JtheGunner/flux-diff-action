@@ -84,7 +84,6 @@ func LoadRequired(path string) (Config, error) {
 
 	data, err := os.ReadFile(path)
 	if err != nil {
-
 		return Config{}, fmt.Errorf("read configuration %s: %w", path, err)
 	}
 
@@ -136,7 +135,7 @@ func parse(data []byte, root string) (Config, error) {
 			return Config{}, fmt.Errorf("line %d: keys must be plain strings", key.Line)
 		}
 		if seen[key.Value] {
-			return Config{}, fmt.Errorf("line %d: duplicate key %q", key.Line, key.Value)
+			return Config{}, fmt.Errorf("line %d: duplicate configuration key", key.Line)
 		}
 		seen[key.Value] = true
 

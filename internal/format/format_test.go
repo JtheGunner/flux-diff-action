@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/JtheGunner/flux-diff-action/internal/model"
@@ -326,17 +327,17 @@ func TestMarkdownAndText_ParentNameCannotInjectLines(t *testing.T) {
 
 	text := Text(r)
 	for _, line := range strings.Split(text, "\n") {
-		if strings.HasPrefix(line, "::") || strings.HasPrefix(line, "## injected") {
+		if strings.HasPrefix(strings.TrimLeftFunc(line, unicode.IsSpace), "::") || strings.HasPrefix(line, "## injected") {
 			t.Errorf("parent name started a new line %q in text", line)
 		}
 	}
 }
 
 func TestText_LinesThatLookLikeWorkflowCommandsAreNeutralised(t *testing.T) {
-	got := neutraliseWorkflowCommands("ok\n::error::x\n##[group]y\n  ::indented\n\t##[tab]\n :: space")
+	got := neutraliseWorkflowCommands("ok\n::error::x\n##[group]y\n  ::indented\n\t##[tab]\n :: space\n\u00a0::nbsp\n\v::vt\n\f##[ff\nx\r::cr\n\u2003::em")
 
 	for _, line := range strings.Split(got, "\n") {
-		trimmed := strings.TrimLeft(line, " \t")
+		trimmed := strings.TrimLeftFunc(line, unicode.IsSpace)
 		if strings.HasPrefix(trimmed, "::") || strings.HasPrefix(trimmed, "##[") {
 			t.Errorf("line %q still reads as a workflow command", line)
 		}

@@ -28,21 +28,25 @@ func TestLoad_ValidatesSchemaAndRejectsUnknownKeys(t *testing.T) {
 		yaml    string
 		wantErr string
 	}{
-		"unknown key":    {"skipKinds: [Secret]\n", "unknown configuration key"},
-		"list is string": {"supply: FAKE-DO-NOT-USE.yaml\n", `key "supply" must be a list`},
-		"number item":    {"stripAttr: [1]\n", `key "stripAttr" must hold strings`},
-		"unquoted kube":  {"kubeVersion: 1.30\n", `key "kubeVersion" must hold strings`},
-		"empty entry":    {"maskPatterns: ['']\n", "empty entries"},
-		"duplicate key":  {"kubeVersion: '1'\nkubeVersion: '2'\n", `duplicate key "kubeVersion"`},
-		"top level list": {"- a\n", "top level must be a mapping"},
-		"two documents":  {"kubeVersion: '1'\n---\nkubeVersion: '2'\n", "multiple YAML documents"},
-		"broken yaml":    {"supply: [a\n", "not valid YAML"},
+		"unknown key":       {"skipKinds: [Secret]\n", "unknown configuration key"},
+		"list is string":    {"supply: FAKE-DO-NOT-USE.yaml\n", `key "supply" must be a list`},
+		"number item":       {"stripAttr: [1]\n", `key "stripAttr" must hold strings`},
+		"unquoted kube":     {"kubeVersion: 1.30\n", `key "kubeVersion" must hold strings`},
+		"empty entry":       {"maskPatterns: ['']\n", "empty entries"},
+		"duplicate key":     {"kubeVersion: '1'\nkubeVersion: '2'\n", "duplicate configuration key"},
+		"duplicate unknown": {"leakedkey: 1\nleakedkey: 2\n", "unknown configuration key"},
+		"top level list":    {"- a\n", "top level must be a mapping"},
+		"two documents":     {"kubeVersion: '1'\n---\nkubeVersion: '2'\n", "multiple YAML documents"},
+		"broken yaml":       {"supply: [a\n", "not valid YAML"},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			_, err := Load(writeConfig(t, t.TempDir(), tc.yaml))
 			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 				t.Fatalf("error = %v, want containing %q", err, tc.wantErr)
+			}
+			if strings.Contains(err.Error(), "leakedkey") || strings.Contains(err.Error(), "skipKinds") {
+				t.Errorf("error echoes a configuration key: %v", err)
 			}
 			if strings.Contains(err.Error(), "FAKE-DO-NOT-USE") {
 				t.Errorf("error echoes a configuration value: %v", err)
