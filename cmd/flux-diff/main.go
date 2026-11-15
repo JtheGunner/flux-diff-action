@@ -25,6 +25,7 @@ func newRootCommand() *cobra.Command {
 		},
 	}
 	addRunFlags(cmd, &opts)
+	cmd.AddCommand(newEventCommand(), newCommentCommand(), newFetchFlateCommand())
 	cmd.SetVersionTemplate("flux-diff {{.Version}}\n")
 
 	return cmd
