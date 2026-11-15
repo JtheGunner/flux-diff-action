@@ -6,3 +6,4 @@ metadata:
 data:
   logLevel: info
   smokeKey: v0.1.0
+  smokeKey2: again
