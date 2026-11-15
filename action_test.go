@@ -180,7 +180,10 @@ func runStep(t *testing.T, name string, stubExit int, env map[string]string) ste
 	}
 	outputFile, summaryFile := filepath.Join(temp, "output"), filepath.Join(temp, "summary")
 
-	cmd := exec.Command("bash", "-c", script)
+	// The runner starts steps with `bash --noprofile --norc -e -o pipefail`;
+	// running them the same way is what exposes scripts that rely on errexit
+	// being off.
+	cmd := exec.Command("bash", "--noprofile", "--norc", "-e", "-o", "pipefail", "-c", script)
 	cmd.Env = []string{
 		"PATH=" + os.Getenv("PATH"), "RUNNER_TEMP=" + temp,
 		"GITHUB_OUTPUT=" + outputFile, "GITHUB_STEP_SUMMARY=" + summaryFile,
@@ -393,5 +396,24 @@ func TestAction_InstallFluxDiffVerifiesTheChecksumBeforeExtracting(t *testing.T)
 				t.Errorf("binary installed = %v, want %v", installed, tc.wantBinary)
 			}
 		})
+	}
+}
+
+// A failing flux-diff must not abort the Render diff step: the step records the
+// exit code and succeeds, so that the comment is still posted and the result is
+// reported according to fail-on-error.
+func TestAction_RenderDiffRecordsAFailingExitCodeAndSucceeds(t *testing.T) {
+	run := runStep(t, "Render diff", 1, map[string]string{
+		"MANIFEST_PATH": ".", "CONFIG_NAME": ".flux-diff.yaml", "BASE_OVERRIDE": "",
+		"MERGE_BASE": strings.Repeat("a", 40), "REGISTRY_CONFIG": "", "MAX_SIZE": "65000",
+	})
+
+	if run.exitCode != 0 {
+		t.Fatalf("Render diff exit = %d, want 0 even though flux-diff failed\n%s%s", run.exitCode, run.stdout, run.stderr)
+	}
+	for _, want := range []string{"exit-code=1", "has-comment=true"} {
+		if !strings.Contains(run.output, want) {
+			t.Errorf("outputs %q lack %q", run.output, want)
+		}
 	}
 }

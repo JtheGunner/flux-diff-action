@@ -133,6 +133,9 @@ runs:
         REGISTRY_CONFIG: ${{ inputs.registry-config }}
         MAX_SIZE: ${{ inputs.max-comment-size }}
       run: |
+        # The runner starts bash with -e; this step must survive a failing
+        # flux-diff to record its exit code, so errexit is switched off.
+        set +e
         set -uo pipefail
         dir="${RUNNER_TEMP}/flux-diff-action"
         base="${BASE_OVERRIDE:-$MERGE_BASE}"
@@ -160,6 +163,7 @@ runs:
         MAX_SIZE: ${{ inputs.max-comment-size }}
         FAIL_ON_ERROR: ${{ inputs.fail-on-error }}
       run: |
+        set +e
         set -uo pipefail
         dir="${RUNNER_TEMP}/flux-diff-action"
         args=(--pr "$PR_NUMBER" --body-file "$dir/comment.md" --max-size "$MAX_SIZE" --step-summary "$GITHUB_STEP_SUMMARY")
