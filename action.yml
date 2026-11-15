@@ -157,12 +157,26 @@ runs:
         PR_NUMBER: ${{ steps.event.outputs.pr }}
         IS_FORK: ${{ steps.event.outputs.fork }}
         MAX_SIZE: ${{ inputs.max-comment-size }}
+        FAIL_ON_ERROR: ${{ inputs.fail-on-error }}
       run: |
-        set -euo pipefail
+        set -uo pipefail
         dir="${RUNNER_TEMP}/flux-diff-action"
         args=(--pr "$PR_NUMBER" --body-file "$dir/comment.md" --max-size "$MAX_SIZE" --step-summary "$GITHUB_STEP_SUMMARY")
         [ "$IS_FORK" != "true" ] || args+=(--fork)
-        "$dir/bin/flux-diff" comment "${args[@]}" >> "$GITHUB_OUTPUT"
+        if result="$("$dir/bin/flux-diff" comment "${args[@]}")"; then
+          printf '%s\n' "$result" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        # The comment could not be written for a reason other than missing
+        # permissions (those are handled inside flux-diff). Keep the diff
+        # visible in the step summary and only fail when asked to.
+        cat "$dir/comment.md" >> "$GITHUB_STEP_SUMMARY"
+        echo "outcome=step-summary" >> "$GITHUB_OUTPUT"
+        if [ "$FAIL_ON_ERROR" = "true" ]; then
+          echo "::error::flux-diff could not post the comment; the diff is in the step summary"
+          exit 1
+        fi
+        echo "::warning::flux-diff could not post the comment; the diff is in the step summary"
 
     - name: Upload full diff
       if: ${{ !cancelled() && steps.diff.outputs.truncated == 'true' }}
