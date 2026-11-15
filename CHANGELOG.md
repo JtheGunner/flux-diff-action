@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-15
+
 ### Added
 
 - Units that fail identically in base and head are now named in the comment as
@@ -66,5 +68,6 @@ First release.
 - The Action rejects `pull_request_target`, requires an explicit release tag,
   and exposes `GITHUB_TOKEN` only to the comment step.
 
-[Unreleased]: https://github.com/JtheGunner/flux-diff-action/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/JtheGunner/flux-diff-action/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/JtheGunner/flux-diff-action/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/JtheGunner/flux-diff-action/releases/tag/v0.1.0
