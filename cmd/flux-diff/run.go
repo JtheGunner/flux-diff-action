@@ -121,6 +121,11 @@ func runDiff(ctx context.Context, opts runOptions, out io.Writer) error {
 		return fmt.Errorf("run flate: %w", err)
 	}
 
+	raw.BrokenInBothSides, err = findBrokenInBothSides(ctx, opts, cfg, raw)
+	if err != nil {
+		return err
+	}
+
 	// Mask before anything is formatted, written or put into an error.
 	masked := masker.MaskResult(raw)
 	known := masker.KnownValues(raw)
@@ -134,6 +139,20 @@ func runDiff(ctx context.Context, opts runOptions, out io.Writer) error {
 	}
 
 	return nil
+}
+
+// findBrokenInBothSides builds the head once more: flate's diff stays silent
+// for a unit that fails identically in base and head, a build does not. The
+// head failures the diff did not report are those units.
+func findBrokenInBothSides(ctx context.Context, opts runOptions, cfg config.Config, diff model.Result) ([]model.Failure, error) {
+	failures, err := flate.Build(ctx, flate.Options{
+		Binary: opts.flateBinary, Path: opts.path, Args: cfg.BuildArgs(),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("run flate build: %w", err)
+	}
+
+	return flate.BrokenInBothSides(diff.Failures, failures), nil
 }
 
 // loadConfig reads the explicit --config file (which must exist) or, without

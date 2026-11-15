@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -157,7 +158,7 @@ func TestParse_Failures_ReportedWithUnitAndReason(t *testing.T) {
 		Name:      "demo-app",
 		Reason:    "valuesFrom Secret demo/demo-credentials not found",
 	}
-	if failure != want {
+	if !reflect.DeepEqual(failure, want) {
 		t.Errorf("failure = %+v, want %+v", failure, want)
 	}
 	if result.Failures[1].Snapshot != "current" {

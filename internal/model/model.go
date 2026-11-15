@@ -55,6 +55,9 @@ type Failure struct {
 	Namespace string
 	Name      string
 	Reason    string
+	// Blocks lists the units that cannot render because this one failed
+	// ("namespace/name"); only `flate build` reports them.
+	Blocks []string
 }
 
 // Bounds for Result.Unparsed.
@@ -69,6 +72,10 @@ type Result struct {
 	Suppressed []Change
 	Warnings   []Warning
 	Failures   []Failure
+	// BrokenInBothSides holds units that fail when flate builds the head and
+	// that flate's diff does not mention: they are broken identically in base
+	// and head, so no change to them can be shown. Snapshot is empty.
+	BrokenInBothSides []Failure
 	// Unparsed holds non-blank stderr lines that matched no known shape, plus
 	// notes when flate's reported counts differ from what was parsed. It keeps
 	// partial results from looking clean. Lines are bounded (MaxUnparsedLines,

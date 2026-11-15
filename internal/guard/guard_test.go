@@ -117,6 +117,7 @@ func TestEnforceSkipKinds_ForcesRequiredKinds(t *testing.T) {
 	}{
 		"flag absent":        {[]string{"diff"}, "diff --skip-kinds=Secret,CustomResourceDefinition"},
 		"forced flag first":  {[]string{"diff", "-p", "x"}, "diff --skip-kinds=Secret,CustomResourceDefinition -p x"},
+		"build subcommand":   {[]string{"build", "-p", "x"}, "build --skip-kinds=Secret,CustomResourceDefinition -p x"},
 		"case-insensitive":   {[]string{"--skip-kinds=secret"}, "--skip-kinds=Secret,CustomResourceDefinition"},
 		"flag as value":      {[]string{"--path", "--skip-kinds="}, "--skip-kinds=Secret,CustomResourceDefinition --path --skip-kinds="},
 		"adds missing CRD":   {[]string{"--skip-kinds", "Secret", "-p", "x"}, "--skip-kinds=Secret,CustomResourceDefinition -p x"},

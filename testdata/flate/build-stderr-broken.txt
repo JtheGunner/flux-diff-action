@@ -1,0 +1,4 @@
+
+  ✗  Kustomization  flux-system/broken-app  kustomize build ./apps/broken-app: accumulating resources: stat apps/broken-app/does-not-exist.yaml: file does not exist
+
+  ✗ 1 failed

@@ -45,7 +45,7 @@ var ErrAmbiguousArgs = errors.New("ambiguous flate arguments")
 
 // EnforceSkipKinds returns a copy of args whose --skip-kinds flag skips at
 // least Secret and CustomResourceDefinition. The forced flag is placed first
-// (right after a leading "diff" subcommand), before every other argument, so
+// (right after a leading "diff" or "build" subcommand), before every other argument, so
 // no user-supplied argument can shadow it. A user-supplied --skip-kinds (separate
 // value or --skip-kinds=X form, repeated or empty) is merged into it; one that
 // lacks Secret (compared case-insensitively) is rejected, a list lacking only
@@ -100,7 +100,7 @@ func EnforceSkipKinds(args []string) ([]string, error) {
 	forced := skipKindsFlag + "=" + strings.Join(kinds, ",")
 
 	insertAt := 0
-	if len(rest) > 0 && rest[0] == "diff" {
+	if len(rest) > 0 && (rest[0] == "diff" || rest[0] == "build") {
 		insertAt = 1
 	}
 

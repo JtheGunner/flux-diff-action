@@ -98,7 +98,7 @@ Main flags of the diff command:
 | ⚙️ | `--config`, `--config-base-rev`, `--config-name` | configuration file, or read it from a git revision |
 | 🔑 | `--registry-config` | registry credentials file passed to flate |
 | ✂️ | `--max-size`, `--output`, `--full-output` | truncation and output files |
-| 🚦 | `--strict` | also exit 1 when units are only partially rendered |
+| 🚦 | `--strict` | also exit 1 when units are only partially rendered or broken in base and head |
 | 🔧 | `--flate-binary` | flate executable to run (default `flate` from `PATH`) |
 
 Run `flux-diff --help` for the complete list.
@@ -243,8 +243,14 @@ Honest limits:
   revisions are not supported yet.
 - flate versions are limited to those with a checksum built into flux-diff.
 - A unit that is broken in the same way in the base and the head revision (for
-  example a `spec.path` that never existed) is not reported: flate's diff only
-  compares the two sides. A unit that a pull request breaks, adds or deletes is
+  example a `spec.path` that never existed) cannot be diffed, and flate's diff
+  does not mention it. flux-diff therefore also runs `flate build` on the head
+  (one extra render run, Secrets skipped) and lists every unit that fails there
+  but that the diff did not report as **Already broken in base and head**, with
+  its reason and the units it blocks. This relies on one assumption: flate stays
+  silent in the diff for a failure that is identical on both sides. The notice
+  does not change the exit code; with `--strict` it does, like any other
+  partial result. A unit that a pull request breaks, adds or deletes is
   reported as `failed` with a reason.
 
 ---

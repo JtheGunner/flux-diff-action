@@ -99,13 +99,8 @@ func (m *Masker) MaskResult(res model.Result) model.Result {
 		}
 	}
 
-	if res.Failures != nil {
-		out.Failures = make([]model.Failure, len(res.Failures))
-		for i, failure := range res.Failures {
-			failure.Reason = MaskString(failure.Reason, known)
-			out.Failures[i] = failure
-		}
-	}
+	out.Failures = maskFailures(res.Failures, known)
+	out.BrokenInBothSides = maskFailures(res.BrokenInBothSides, known)
 
 	if res.Unparsed != nil {
 		out.Unparsed = make([]string, len(res.Unparsed))
@@ -115,6 +110,28 @@ func (m *Masker) MaskResult(res model.Result) model.Result {
 	}
 
 	return out
+}
+
+// maskFailures returns a copy of failures with every known value scrubbed from
+// the reasons and the names of blocked units.
+func maskFailures(failures []model.Failure, known []string) []model.Failure {
+	if failures == nil {
+		return nil
+	}
+
+	masked := make([]model.Failure, len(failures))
+	for i, failure := range failures {
+		failure.Reason = MaskString(failure.Reason, known)
+		if failure.Blocks != nil {
+			failure.Blocks = make([]string, len(failures[i].Blocks))
+			for b, blocked := range failures[i].Blocks {
+				failure.Blocks[b] = MaskString(blocked, known)
+			}
+		}
+		masked[i] = failure
+	}
+
+	return masked
 }
 
 // KnownValues returns every value the masker would hide in res, for use with
