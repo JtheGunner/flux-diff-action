@@ -12,6 +12,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The Markdown comment folds several `SOPSUnreadable` or `ExternalSource` notices
   into one collapsed block per code with a counter. Failures and other warnings
   stay individual; text and JSON output are unchanged.
+- Keys matched by `maskPatterns` stay readable in the diff; only their value is
+  masked. Previously the key name was often replaced by `<masked>` as well.
+  A secret value of at least 8 characters is still removed from key names
+  (plain, base64, JSON-escaped); a key equal to a secret value is masked at any
+  length. Shorter values are not matched inside key names.
+- A numeric secret value is masked wherever the number appears, including
+  values shorter than 8 digits.
 
 ## [0.1.0] - 2026-11-15
 

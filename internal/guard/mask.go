@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/JtheGunner/flux-diff-action/internal/model"
@@ -18,6 +19,12 @@ const (
 	// Masked replaces a secret value that was added, removed or is shown on the
 	// old side of a change.
 	Masked = "<masked>"
+
+	// minKeyScrubLength is the shortest known value that is matched as a
+	// substring inside the key name of a masked, pattern-matched value. Shorter
+	// values (such as "word") would turn readable keys like "password" into
+	// "<masked>". A key that equals a known value is masked at any length.
+	minKeyScrubLength = 8
 
 	maskedUnparseable = "<masked, unparseable>"
 	secretKind        = "Secret"
@@ -179,16 +186,18 @@ func (m *Masker) maskRaw(
 		return json.RawMessage(`"` + maskedUnparseable + `"`)
 	}
 
-	masked := scrubTree(m.redact(tree, nil, secret, own, other, isNew), known)
+	keyKnown := keyScrubValues(known)
+	masked := scrubTree(m.redact(tree, nil, secret, own, other, isNew, known, keyKnown), known)
 
 	encoded, err := marshalNoEscape(masked)
 	if err != nil {
 		return json.RawMessage(`"` + maskedUnparseable + `"`)
 	}
 
-	// Defence in depth: the tree was already scrubbed value by value, so this
-	// only catches forms that survive in the encoded bytes.
-	scrubbed := []byte(MaskString(string(encoded), known))
+	// Defence in depth over the encoded bytes. Only values of at least
+	// minKeyScrubLength are used here because the bytes include the kept key
+	// names; shorter values were already removed from every decoded value.
+	scrubbed := []byte(MaskString(string(encoded), keyKnown))
 	if !json.Valid(scrubbed) {
 		return json.RawMessage(`"` + maskedUnparseable + `"`)
 	}
@@ -196,17 +205,37 @@ func (m *Masker) maskRaw(
 	return scrubbed
 }
 
-// scrubTree applies MaskString to every string value and map key of node, so
-// known values are removed from their decoded form rather than from the
-// JSON-escaped bytes. It returns a new tree.
+// keyScrubValues returns the known values long enough to be matched inside key
+// names (see minKeyScrubLength).
+func keyScrubValues(known []string) []string {
+	var out []string
+	for _, value := range known {
+		if len(value) >= minKeyScrubLength {
+			out = append(out, value)
+		}
+	}
+
+	return out
+}
+
+// scrubTree applies MaskString to every string value of node, so known values
+// are removed from their decoded form rather than from the JSON-escaped bytes.
+// A number that contains a known value becomes the masked placeholder string.
+// Map keys are scrubbed by redact. It returns a new tree.
 func scrubTree(node any, known []string) any {
 	switch typed := node.(type) {
 	case string:
 		return MaskString(typed, known)
+	case json.Number:
+		if text := typed.String(); MaskString(text, known) != text {
+			return maskedPlaceholder
+		}
+
+		return node
 	case map[string]any:
 		out := make(map[string]any, len(typed))
 		for key, child := range typed {
-			out[MaskString(key, known)] = scrubTree(child, known)
+			out[key] = scrubTree(child, known)
 		}
 
 		return out
@@ -266,8 +295,13 @@ func (m *Masker) walk(node any, p []string, secret bool, visit func([]string, an
 	}
 }
 
-// redact returns a masked copy of node.
-func (m *Masker) redact(node any, p []string, secret bool, own, other map[string]any, isNew bool) any {
+// redact returns a masked copy of node. Keys are scrubbed against known; the
+// key of a masked value stays readable (see visibleKey). keyKnown is the subset
+// of known that is matched inside such keys.
+func (m *Masker) redact(
+	node any, p []string, secret bool,
+	own, other map[string]any, isNew bool, known, keyKnown []string,
+) any {
 	switch typed := node.(type) {
 	case map[string]any:
 		out := make(map[string]any, len(typed))
@@ -275,11 +309,11 @@ func (m *Masker) redact(node any, p []string, secret bool, own, other map[string
 			childPath := appendPath(p, key)
 			if masked, _ := m.isMasked(childPath, child, secret); masked {
 				if replacement, keep := replacementFor(childPath, own, other, isNew, false); keep {
-					out[key] = replacement
+					out[visibleKey(key, secret, known, keyKnown)] = replacement
 				}
 				continue
 			}
-			out[key] = m.redact(child, childPath, secret, own, other, isNew)
+			out[MaskString(key, known)] = m.redact(child, childPath, secret, own, other, isNew, known, keyKnown)
 		}
 
 		return out
@@ -291,13 +325,28 @@ func (m *Masker) redact(node any, p []string, secret bool, own, other map[string
 				out[i], _ = replacementFor(childPath, own, other, isNew, true)
 				continue
 			}
-			out[i] = m.redact(child, childPath, secret, own, other, isNew)
+			out[i] = m.redact(child, childPath, secret, own, other, isNew, known, keyKnown)
 		}
 
 		return out
 	default:
 		return node
 	}
+}
+
+// visibleKey returns the key under which a masked value is shown. The name
+// stays readable so a reviewer can tell which value changed; only the value is
+// masked. Keys inside a Secret keep the strict treatment. Otherwise a key that
+// equals a known value is masked at any length, and a key that contains a known
+// value (plain, base64 or JSON-escaped) is scrubbed when that value is at least
+// minKeyScrubLength long. Residual limit: a shorter value embedded in a key
+// name is not scrubbed.
+func visibleKey(key string, secret bool, known, keyKnown []string) string {
+	if secret || slices.Contains(known, key) {
+		return MaskString(key, known)
+	}
+
+	return MaskString(key, keyKnown)
 }
 
 // replacementFor decides what replaces the masked value at p. keep is false

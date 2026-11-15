@@ -209,7 +209,14 @@ allowMissingKinds: [Certificate]
   construction or artifact writing. Masked values appear as `<masked>`, or as
   `<masked, changed>` when the value differs between the revisions.
 - `maskPatterns` adds extra key globs for the secret guard; values under
-  matching keys are masked too. Matching is case-insensitive.
+  matching keys are masked too. Matching is case-insensitive. The key name
+  stays readable, only the value is masked. A key that equals a secret value is
+  masked at any length, and a secret value of at least 8 characters is also
+  removed when it is embedded in a key name (plain, base64 or JSON-escaped).
+  Shorter values are not matched inside key names, so that a key such as
+  `password` is not masked because a value like `word` exists. Limit: a secret
+  value shorter than 8 characters that is embedded in a key name stays visible
+  there. Keys inside `Secret` objects are always masked strictly.
 - flux-diff never decrypts SOPS. Encrypted inputs stay unresolved and the unit
   is reported as partial.
 
