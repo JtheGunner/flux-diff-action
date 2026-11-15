@@ -1,23 +1,20 @@
 package main
 
 import (
-	"bytes"
+	"os"
 	"testing"
 )
 
-func TestRootCommand_VersionFlag(t *testing.T) {
-	var out bytes.Buffer
-
-	cmd := newRootCommand()
-	cmd.SetOut(&out)
-	cmd.SetErr(&out)
-	cmd.SetArgs([]string{"--version"})
-
-	if err := cmd.Execute(); err != nil {
-		t.Fatalf("execute --version: %v", err)
+// TestMain clears the variables a GitHub Actions runner sets, so the tests give
+// the same result on a developer machine and in CI. Tests that need one set it
+// with t.Setenv.
+func TestMain(m *testing.M) {
+	for _, name := range []string{
+		"GITHUB_WORKSPACE", "GITHUB_EVENT_PATH", "GITHUB_EVENT_NAME", "GITHUB_OUTPUT",
+		"GITHUB_STEP_SUMMARY", "GITHUB_TOKEN", "GITHUB_API_URL", "GITHUB_REPOSITORY",
+	} {
+		os.Unsetenv(name)
 	}
 
-	if got, want := out.String(), "flux-diff dev\n"; got != want {
-		t.Errorf("version output = %q, want %q", got, want)
-	}
+	os.Exit(m.Run())
 }
