@@ -16,10 +16,9 @@
 #      itself and run `shasum -a 256` on it, and compare with the digest in the
 #      release's checksums file.
 #
-# PLACEHOLDER: the digests below are all zeros and the asset names are not yet
-# verified against the release. They match no real archive, so every download
-# is rejected (fail closed) until real values replace them.
-v0.7.3 linux amd64 0000000000000000000000000000000000000000000000000000000000000000 flate_0.7.3_linux_amd64.tar.gz
-v0.7.3 linux arm64 0000000000000000000000000000000000000000000000000000000000000000 flate_0.7.3_linux_arm64.tar.gz
-v0.7.3 darwin amd64 0000000000000000000000000000000000000000000000000000000000000000 flate_0.7.3_darwin_amd64.tar.gz
-v0.7.3 darwin arm64 0000000000000000000000000000000000000000000000000000000000000000 flate_0.7.3_darwin_arm64.tar.gz
+# Verified for v0.7.3: the digests below come from the release's *.sha256 assets
+# and match the SHA-256 of the downloaded archives.
+v0.7.3 linux amd64 05d3c79447647e95329aa45c7035e7ebac3a120942972e78819deadc3bf0afeb flate_0.7.3_linux_amd64.tar.gz
+v0.7.3 linux arm64 345b8b679de439343003097b79aabec7d070c05e70eeca5c413193ba97aa368f flate_0.7.3_linux_arm64.tar.gz
+v0.7.3 darwin amd64 fc63ba93d4943f5828e724119613d1ce37b52897387aa958f5d263f291bb5db9 flate_0.7.3_darwin_amd64.tar.gz
+v0.7.3 darwin arm64 fb4aca650b55fb020dac039775975ef3ab753a4582bdd034dc8ad5c73ad47755 flate_0.7.3_darwin_arm64.tar.gz
