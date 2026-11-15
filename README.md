@@ -69,9 +69,22 @@ jobs:
   next to untrusted code.
 - The comment only contains masked values. Secret values never reach the
   comment, the job log or the artifact.
-- flux-diff and flate are downloaded as release assets and checked against
-  SHA-256 digests before they run. flate is licensed under AGPL-3.0; flux-diff
-  only runs it as a separate process and never links it.
+- flate is licensed under AGPL-3.0; flux-diff only runs it as a separate
+  process and never links it.
+
+### 🔐 Trust model of the downloads
+
+- **flate** is checked against SHA-256 digests that are embedded in the
+  flux-diff binary. They ship with the action's own code, so they are covered
+  by whatever you pin.
+- **flux-diff** is downloaded from the release of this repository and checked
+  against the `checksums.txt` of the same release. That detects corruption and
+  mixed-up assets, but not a compromised release: whoever can replace the
+  archive can replace the checksum file too.
+- The stronger control is to pin the action to a **full commit SHA**, as in the
+  example above, and to use a release `version` you have reviewed. Release
+  attestation (signed provenance) can be added in the release pipeline to
+  close the gap further.
 
 See [docs/e2e-acceptance.md](docs/e2e-acceptance.md) for a manual acceptance run.
 
