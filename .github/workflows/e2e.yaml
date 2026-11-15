@@ -1,0 +1,40 @@
+name: E2E
+
+# Exercises the composite action of this repository (uses: ./) against the
+# fixture in testdata/e2e.
+#
+# It needs a published flux-diff release, because the action downloads the
+# release assets. Set the repository variable E2E_FLUX_DIFF_VERSION (for
+# example v0.1.0) once a release exists; without it the job is skipped.
+#
+# The action only supports the pull_request event, so this workflow does not
+# offer workflow_dispatch. To see the comment, change a file under
+# testdata/e2e in a pull request. See docs/e2e-acceptance.md.
+
+on:
+  pull_request:
+    paths:
+      - action.yml
+      - .github/workflows/e2e.yaml
+      - testdata/e2e/**
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  action:
+    # Fork PRs get a read-only token and only produce the step summary.
+    if: ${{ vars.E2E_FLUX_DIFF_VERSION != '' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: ./
+        with:
+          version: ${{ vars.E2E_FLUX_DIFF_VERSION }}
+          path: testdata/e2e
