@@ -1,0 +1,62 @@
+{
+  "changes": [
+    {
+      "parent": {
+        "group": "helm.toolkit.fluxcd.io",
+        "kind": "HelmRelease",
+        "namespace": "demo",
+        "name": "demo-app",
+        "path": ""
+      },
+      "apiVersion": "v1",
+      "kind": "ConfigMap",
+      "namespace": "demo",
+      "name": "demo-app",
+      "status": "changed",
+      "old": {
+        "apiVersion": "v1",
+        "kind": "ConfigMap",
+        "metadata": {"name": "demo-app", "namespace": "demo"},
+        "data": {"token": "FAKE-DO-NOT-USE-old"}
+      },
+      "new": {
+        "apiVersion": "v1",
+        "kind": "ConfigMap",
+        "metadata": {"name": "demo-app", "namespace": "demo"},
+        "data": {"token": "FAKE-DO-NOT-USE-new"}
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Namespace",
+      "name": "demo-extra",
+      "status": "added",
+      "new": {
+        "apiVersion": "v1",
+        "kind": "Namespace",
+        "metadata": {"name": "demo-extra"}
+      }
+    },
+    {
+      "apiVersion": "apps/v1",
+      "kind": "Deployment",
+      "namespace": "demo",
+      "name": "demo-old",
+      "status": "removed",
+      "old": {
+        "apiVersion": "apps/v1",
+        "kind": "Deployment",
+        "metadata": {"name": "demo-old", "namespace": "demo"}
+      }
+    }
+  ],
+  "suppressed": [
+    {
+      "apiVersion": "v1",
+      "kind": "ConfigMap",
+      "namespace": "demo",
+      "name": "demo-noise",
+      "status": "changed"
+    }
+  ]
+}
