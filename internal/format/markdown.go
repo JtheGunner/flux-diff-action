@@ -115,12 +115,21 @@ func markdownHead(r model.Result, marker string) string {
 	return out.String()
 }
 
+// reportBlock is one unit of the "Not rendered / warnings" section: a single
+// list item or a collapsed group of notices. Truncation keeps or drops a block
+// as a whole, so a <details> tag is never left open.
+type reportBlock struct {
+	text    string
+	notices int
+}
+
 // partialSection lists everything that could not be fully rendered. It is
 // placed before the object diffs so truncation never hides it. When the list
-// does not fit budget, trailing items are replaced by a count.
+// does not fit budget, trailing blocks are replaced by a count of the notices
+// they held.
 func partialSection(r model.Result, budget int) (section string, truncated bool) {
-	items := incompleteItems(r)
-	if len(items) == 0 {
+	blocks := reportBlocks(incompleteItems(r))
+	if len(blocks) == 0 {
 		return "", false
 	}
 
@@ -128,24 +137,73 @@ func partialSection(r model.Result, budget int) (section string, truncated bool)
 	out.WriteString("### Not rendered / warnings\n\n")
 	used := runeCount(out.String())
 
-	for index, item := range items {
-		line := fmt.Sprintf("- **%s:** %s\n", item.category, codeSpan(singleLine(item.text)))
-		rest := fmt.Sprintf("- ... and %d more items not shown\n", len(items)-index)
+	remaining := 0
+	for _, block := range blocks {
+		remaining += block.notices
+	}
 
-		fits := used+runeCount(line) <= budget
-		last := index == len(items)-1
-		if !fits || (!last && used+runeCount(line)+runeCount(rest) > budget) {
+	for index, block := range blocks {
+		rest := fmt.Sprintf("- ... and %d more items not shown\n", remaining)
+
+		fits := used+runeCount(block.text) <= budget
+		last := index == len(blocks)-1
+		if !fits || (!last && used+runeCount(block.text)+runeCount(rest) > budget) {
 			out.WriteString(rest + "\n")
 
 			return out.String(), true
 		}
 
-		out.WriteString(line)
-		used += runeCount(line)
+		out.WriteString(block.text)
+		used += runeCount(block.text)
+		remaining -= block.notices
 	}
 	out.WriteString("\n")
 
 	return out.String(), false
+}
+
+// reportBlocks turns items into blocks in first-seen order. Expected notices
+// of one category that occur more than once share a collapsed <details> block
+// at the position of the first of them; everything else stays a list item.
+func reportBlocks(items []incompleteItem) []reportBlock {
+	grouped := map[string][]incompleteItem{}
+	for _, item := range items {
+		if item.expected {
+			grouped[item.category] = append(grouped[item.category], item)
+		}
+	}
+
+	var blocks []reportBlock
+	emitted := map[string]bool{}
+	for _, item := range items {
+		members := grouped[item.category]
+		if !item.expected || len(members) < 2 {
+			blocks = append(blocks, reportBlock{text: listItem(item), notices: 1})
+			continue
+		}
+		if emitted[item.category] {
+			continue
+		}
+		emitted[item.category] = true
+		blocks = append(blocks, noticeGroupBlock(item.category, members))
+	}
+
+	return blocks
+}
+
+func listItem(item incompleteItem) string {
+	return fmt.Sprintf("- **%s:** %s\n", item.category, codeSpan(singleLine(item.text)))
+}
+
+func noticeGroupBlock(category string, members []incompleteItem) reportBlock {
+	var out strings.Builder
+	fmt.Fprintf(&out, "<details>\n<summary><b>%s:</b> %d notices</summary>\n\n", html.EscapeString(category), len(members))
+	for _, member := range members {
+		out.WriteString("- " + codeSpan(singleLine(member.text)) + "\n")
+	}
+	out.WriteString("\n</details>\n\n")
+
+	return reportBlock{text: out.String(), notices: len(members)}
 }
 
 func buildEntries(changes []model.Change) []entry {
