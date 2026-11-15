@@ -7,7 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-The first release entry is added when the first version tag is cut.
+## [0.1.0] - 2026-11-15
+
+First release.
 
 ### Added
 
@@ -38,3 +40,6 @@ The first release entry is added when the first version tag is cut.
   flux-diff downloads are verified against the release's `checksums.txt`.
 - The Action rejects `pull_request_target`, requires an explicit release tag,
   and exposes `GITHUB_TOKEN` only to the comment step.
+
+[Unreleased]: https://github.com/JtheGunner/flux-diff-action/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/JtheGunner/flux-diff-action/releases/tag/v0.1.0
