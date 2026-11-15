@@ -10,7 +10,7 @@
 [![Go](https://img.shields.io/badge/go-1.27-3776ab?style=flat-square&logo=go&logoColor=white)](go.mod)
 [![GitHub Action](https://img.shields.io/badge/GitHub-Action-0ea5e9?style=flat-square&logo=githubactions&logoColor=white)](action.yml)
 [![Secrets](https://img.shields.io/badge/secrets-masked-8b5cf6?style=flat-square)](#-masking-guarantees)
-[![Status](https://img.shields.io/badge/status-pre--release-f59e0b?style=flat-square)](CHANGELOG.md)
+[![Status](https://img.shields.io/badge/status-v0.1-f59e0b?style=flat-square)](CHANGELOG.md)
 
 </div>
 
@@ -74,7 +74,7 @@ You also need the `flate` executable. `flux-diff fetch-flate` downloads a
 checksum-verified copy.
 
 > [!NOTE]
-> No release has been published yet. Examples use the placeholder `<version>`.
+> `<version>` stands for a release tag such as `0.1.0`, without the leading `v`.
 
 ---
 
@@ -128,7 +128,7 @@ jobs:
 
       - uses: JtheGunner/flux-diff-action@<full commit SHA>
         with:
-          version: v<version>      # flux-diff release tag; required, "latest" is rejected
+          version: v0.1.0          # flux-diff release tag; required, "latest" is rejected
           path: .                  # directory of the Flux manifests
 ```
 
