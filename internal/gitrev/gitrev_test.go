@@ -185,3 +185,39 @@ func TestReadFile_RejectsDirOutsideRoot(t *testing.T) {
 		t.Fatal("want an error for a directory outside the root")
 	}
 }
+
+func TestReadFile_RejectsPathReachedThroughCommittedSymlink(t *testing.T) {
+	root := newRepo(t)
+	write(t, root, "real/.flux-diff.yaml", "kubeVersion: \"1.30.0\"\n")
+	if err := os.Symlink("real", filepath.Join(root, "clusters")); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, root, "add", ".")
+	runGit(t, root, "commit", "-q", "-m", "base")
+
+	_, err := ReadFile(context.Background(), root, filepath.Join(root, "clusters"), "HEAD", ".flux-diff.yaml")
+	if err == nil {
+		t.Fatal("a path reached through a symlink must be rejected")
+	}
+	if errors.Is(err, ErrNotFound) {
+		t.Errorf("err = %v; the config of the symlink target must not even be looked up", err)
+	}
+
+	// The same file stays readable through its real path.
+	if _, err := ReadFile(context.Background(), root, filepath.Join(root, "real"), "HEAD", ".flux-diff.yaml"); err != nil {
+		t.Errorf("real path: %v", err)
+	}
+}
+
+func TestReadFile_AcceptsRootSpelledThroughAnAlias(t *testing.T) {
+	root := newRepo(t)
+	write(t, root, "apps/.flux-diff.yaml", "x: 1\n")
+	runGit(t, root, "add", ".")
+	runGit(t, root, "commit", "-q", "-m", "base")
+	real, _ := filepath.EvalSymlinks(root)
+
+	// root is the resolved top level (as ResolveRoot returns it), dir the alias.
+	if _, err := ReadFile(context.Background(), real, filepath.Join(root, "apps"), "HEAD", ".flux-diff.yaml"); err != nil {
+		t.Fatalf("aliased dir: %v", err)
+	}
+}

@@ -181,19 +181,50 @@ func gitEnv(root string) []string {
 }
 
 // repoRelative converts name, relative to dir, into a path relative to root.
+//
+// The path is computed lexically. Only the trusted root is symlink-resolved:
+// a pull request can commit a symlink below the root, and following it would
+// let the PR choose which path of the base revision is read. A symlink anywhere
+// between root and dir therefore fails closed.
 func repoRelative(root, dir, name string) (string, error) {
 	realRoot, err := filepath.EvalSymlinks(root)
 	if err != nil {
 		return "", errors.New("cannot resolve the repository root")
 	}
-	realDir, err := filepath.EvalSymlinks(dir)
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return "", errors.New("cannot resolve the repository root")
+	}
+	absDir, err := filepath.Abs(dir)
 	if err != nil {
 		return "", errors.New("cannot resolve the manifest directory")
 	}
-	sub, err := filepath.Rel(realRoot, realDir)
-	if err != nil || sub == ".." || strings.HasPrefix(sub, ".."+string(filepath.Separator)) {
-		return "", errors.New("the manifest directory is not inside the repository root")
+
+	// Walk up from dir until the trusted root is reached. The root may be
+	// spelled through an alias (/var vs /private/var), so an ancestor counts as
+	// the root when it resolves to it. Every component below is checked, and
+	// none may be a symlink.
+	var parts []string
+	for current := absDir; ; {
+		info, statErr := os.Lstat(current)
+		isLink := statErr == nil && info.Mode()&os.ModeSymlink != 0
+
+		if !isLink || current == absRoot {
+			if resolved, evalErr := filepath.EvalSymlinks(current); evalErr == nil && resolved == realRoot {
+				break
+			}
+		}
+		if isLink {
+			return "", errors.New("the manifest directory must not be reached through a symlink")
+		}
+
+		parent := filepath.Dir(current)
+		if parent == current {
+			return "", errors.New("the manifest directory is not inside the repository root")
+		}
+		parts = append([]string{filepath.Base(current)}, parts...)
+		current = parent
 	}
 
-	return path.Join(filepath.ToSlash(sub), name), nil
+	return path.Join(append(parts, name)...), nil
 }
