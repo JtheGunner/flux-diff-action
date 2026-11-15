@@ -1,0 +1,184 @@
+package main
+
+import (
+	"bytes"
+	"flag"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+var update = flag.Bool("update", false, "rewrite golden files")
+
+const (
+	flateFixtures = "../../testdata/flate"
+	goldenDir     = "../../testdata/golden"
+)
+
+// fakeFlate writes a shell script that mimics the flate CLI and returns its path.
+func fakeFlate(t *testing.T, stdoutFixture, stderrFixture, exitCode string) string {
+	t.Helper()
+
+	script := `#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "flate v0.7.3"
+  exit 0
+fi
+if [ -n "$FAKE_FLATE_STDOUT" ]; then cat "$FAKE_FLATE_STDOUT"; fi
+if [ -n "$FAKE_FLATE_STDERR" ]; then cat "$FAKE_FLATE_STDERR" >&2; fi
+exit "$FAKE_FLATE_EXIT"
+`
+	path := filepath.Join(t.TempDir(), "flate")
+	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
+		t.Fatalf("write fake binary: %v", err)
+	}
+
+	t.Setenv("FAKE_FLATE_EXIT", exitCode)
+	t.Setenv("FAKE_FLATE_STDOUT", fixtureAbs(t, stdoutFixture))
+	t.Setenv("FAKE_FLATE_STDERR", fixtureAbs(t, stderrFixture))
+
+	return path
+}
+
+func fixtureAbs(t *testing.T, name string) string {
+	t.Helper()
+
+	if name == "" {
+		return ""
+	}
+	abs, err := filepath.Abs(filepath.Join(flateFixtures, name))
+	if err != nil {
+		t.Fatalf("resolve fixture: %v", err)
+	}
+
+	return abs
+}
+
+func execute(t *testing.T, args ...string) (stdout string, err error) {
+	t.Helper()
+
+	var out bytes.Buffer
+	cmd := newRootCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs(args)
+	err = cmd.Execute()
+
+	return out.String(), err
+}
+
+func assertGolden(t *testing.T, name, got string) {
+	t.Helper()
+
+	path := filepath.Join(goldenDir, name)
+	if *update {
+		if err := os.MkdirAll(goldenDir, 0o755); err != nil {
+			t.Fatalf("create golden dir: %v", err)
+		}
+		if err := os.WriteFile(path, []byte(got), 0o644); err != nil {
+			t.Fatalf("write golden: %v", err)
+		}
+	}
+
+	want, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read golden %s (run with -update): %v", name, err)
+	}
+	if got != string(want) {
+		t.Errorf("output differs from golden %s (run with -update and review the diff)\n--- got ---\n%s", name, got)
+	}
+}
+
+func TestCLI_EndToEnd_Fixture(t *testing.T) {
+	binary := fakeFlate(t, "changes.json", "stderr-warnings.txt", "0")
+
+	out, err := execute(t, "--flate-binary", binary, "--base", "main", "--path", ".")
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	assertGolden(t, "cli-markdown.md", out)
+}
+
+func TestCLI_SecretFixture_NeverLeaksInOutputOrError(t *testing.T) {
+	binary := fakeFlate(t, "secret-changes.json", "stderr-secret-failure.txt", "1")
+
+	for _, outputFormat := range []string{"markdown", "text", "json"} {
+		t.Run(outputFormat, func(t *testing.T) {
+			out, err := execute(t, "--flate-binary", binary, "--format", outputFormat)
+			if err == nil {
+				t.Fatal("want an error for the failed unit")
+			}
+			if out == "" {
+				t.Fatal("no output")
+			}
+			for _, text := range []string{out, err.Error()} {
+				if strings.Contains(text, "FAKE-DO-NOT-USE") {
+					t.Errorf("fake secret value leaked into %s output or error", outputFormat)
+				}
+			}
+		})
+	}
+}
+
+func TestCLI_ExitCodes(t *testing.T) {
+	cases := []struct {
+		name    string
+		stderr  string
+		exit    string
+		args    []string
+		wantErr string
+	}{
+		{"completed run with warnings", "stderr-warnings.txt", "0", nil, ""},
+		{"strict turns partial into failure", "stderr-warnings.txt", "0", []string{"--strict"}, "result is partial"},
+		{"failed unit", "stderr-failures.txt", "1", nil, "unit(s) failed"},
+		{"clean run", "", "0", []string{"--strict"}, ""},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			binary := fakeFlate(t, "changes.json", tc.stderr, tc.exit)
+
+			out, err := execute(t, append([]string{"--flate-binary", binary}, tc.args...)...)
+			if out == "" {
+				t.Error("the comment must be written even when the run fails")
+			}
+			switch {
+			case tc.wantErr == "" && err != nil:
+				t.Errorf("unexpected error: %v", err)
+			case tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr)):
+				t.Errorf("error = %v, want containing %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestCLI_UnsupportedFlagValues(t *testing.T) {
+	binary := fakeFlate(t, "changes.json", "", "0")
+
+	cases := map[string]struct {
+		args []string
+		want string
+	}{
+		"config":  {[]string{"--config", "x.yaml"}, "--config is not supported yet"},
+		"head":    {[]string{"--head", "feature"}, "--head other than the working tree is not supported yet"},
+		"format":  {[]string{"--format", "xml"}, "unsupported --format"},
+		"nothing": {nil, ""},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			_, err := execute(t, append([]string{"--flate-binary", binary}, tc.args...)...)
+			if tc.want == "" {
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("error = %v, want containing %q", err, tc.want)
+			}
+		})
+	}
+}

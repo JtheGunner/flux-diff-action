@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/JtheGunner/flux-diff-action/internal/format"
 	"github.com/JtheGunner/flux-diff-action/internal/model"
 )
 
@@ -294,9 +295,10 @@ type outputPath struct {
 	render func(t *testing.T, res model.Result, known []string) string
 }
 
-// outputPaths lists every sink the leak guard covers. Add the Markdown
-// formatter here when it lands (FDA-8) so it is checked against the same
-// fixtures.
+// outputPaths lists every sink the leak guard covers: the raw JSON encoding,
+// log lines, the real formatters (Markdown, text, JSON) and the CLI error
+// messages. Formatters and error builders receive the masked result and must
+// not need to mask anything themselves.
 var outputPaths = []outputPath{
 	{"json", func(t *testing.T, res model.Result, _ []string) string {
 		t.Helper()
@@ -327,6 +329,31 @@ var outputPaths = []outputPath{
 		parts = append(parts, MaskString(errors.New("raw: "+strings.Join(known, " ")).Error(), known))
 
 		return strings.Join(parts, "\n")
+	}},
+	{"format markdown", func(_ *testing.T, res model.Result, _ []string) string {
+		body, _ := format.Markdown(res, format.MarkdownOptions{})
+
+		return body
+	}},
+	{"format markdown truncated", func(_ *testing.T, res model.Result, _ []string) string {
+		body, _ := format.Markdown(res, format.MarkdownOptions{MaxChars: 1200})
+
+		return body
+	}},
+	{"format text", func(_ *testing.T, res model.Result, _ []string) string {
+		return format.Text(res)
+	}},
+	{"format json", func(t *testing.T, res model.Result, _ []string) string {
+		t.Helper()
+		out, err := format.JSON(res)
+		if err != nil {
+			t.Fatalf("format json: %v", err)
+		}
+
+		return out
+	}},
+	{"cli error messages", func(_ *testing.T, res model.Result, _ []string) string {
+		return format.FailureSummary(res) + "\n" + format.PartialSummary(res)
 	}},
 }
 
