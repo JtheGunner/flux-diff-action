@@ -103,6 +103,12 @@ Main flags of the diff command:
 
 Run `flux-diff --help` for the complete list.
 
+The `json` format serializes the result model. Units that fail identically in
+base and head are listed under `BrokenInBothSides`, one object per unit with
+`Kind`, `Namespace`, `Name` and `Blocks` (the units it prevents from
+rendering). The failure reason is intentionally not part of it, see
+[Limits](#-limits).
+
 ---
 
 ## 🚀 GitHub Action
@@ -253,8 +259,9 @@ Honest limits:
   stays silent in the diff for a failure that is identical on both sides. The
   notice does not change the exit code; with `--strict` it does, like any other
   partial result. If `flate build` fails but prints no failure in a known
-  format, the run fails with a fixed error rather than looking clean. A unit that a pull request breaks, adds or deletes is
-  reported as `failed` with a reason.
+  format, the run fails with a fixed error rather than looking clean. A unit
+  that a pull request breaks, adds or deletes is reported as `failed` with a
+  reason.
 
 ---
 
