@@ -13,7 +13,7 @@ func TestMain(m *testing.M) {
 		"GITHUB_WORKSPACE", "GITHUB_EVENT_PATH", "GITHUB_EVENT_NAME", "GITHUB_OUTPUT",
 		"GITHUB_STEP_SUMMARY", "GITHUB_TOKEN", "GITHUB_API_URL", "GITHUB_REPOSITORY",
 	} {
-		os.Unsetenv(name)
+		_ = os.Unsetenv(name)
 	}
 
 	os.Exit(m.Run())
