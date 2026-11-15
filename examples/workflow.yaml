@@ -1,0 +1,31 @@
+# Example pull request workflow for flux-diff.
+#
+# Copy it to .github/workflows/flux-diff.yaml. Replace <full commit SHA> and
+# <version> with the release you have reviewed.
+name: flux-diff
+
+# pull_request_target is not supported: it runs with a write token next to
+# untrusted pull request code.
+on: pull_request
+
+permissions:
+  contents: read
+  pull-requests: write # needed to create and update the comment
+
+jobs:
+  diff:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.event.pull_request.head.sha }} # the PR head, not the merge commit
+          fetch-depth: 0 # the merge base needs the full history
+          persist-credentials: false
+
+      # Pin action references to a full commit SHA, not to a tag or branch.
+      # No token input is needed: the action uses the workflow's GITHUB_TOKEN,
+      # limited by the permissions block above, and only in the comment step.
+      - uses: JtheGunner/flux-diff-action@<full commit SHA> # v<version>
+        with:
+          version: v<version> # flux-diff release tag; "latest" is rejected
+          path: . # directory of the Flux manifests
