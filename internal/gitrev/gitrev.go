@@ -95,6 +95,11 @@ func parseTreeEntry(listing []byte) (mode, objectType, object string, err error)
 }
 
 func git(ctx context.Context, dir string, limit int64, args ...string) ([]byte, error) {
+	// The derived context lets us kill git once the limit is exceeded: git would
+	// otherwise block writing into the full pipe and Wait would never return.
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = dir
 
@@ -110,11 +115,15 @@ func git(ctx context.Context, dir string, limit int64, args ...string) ([]byte, 
 	}
 
 	data, readErr := io.ReadAll(io.LimitReader(stdout, limit+1))
+	exceeded := int64(len(data)) > limit
+	if exceeded || readErr != nil {
+		cancel()
+	}
 	waitErr := cmd.Wait()
 	if readErr != nil {
 		return nil, fmt.Errorf("read git %s output: %w", args[0], readErr)
 	}
-	if int64(len(data)) > limit {
+	if exceeded {
 		return nil, fmt.Errorf("git %s output exceeds %d bytes", args[0], limit)
 	}
 	if waitErr != nil {

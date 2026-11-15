@@ -6,7 +6,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 )
 
 func runGit(t *testing.T, dir string, args ...string) {
@@ -101,5 +103,26 @@ func write(t *testing.T, dir, name, content string) {
 	}
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestReadFile_OversizeBlobFailsPromptly(t *testing.T) {
+	dir := newRepo(t)
+	write(t, dir, ".flux-diff.yaml", strings.Repeat("# FAKE-DO-NOT-USE padding\n", 200000))
+	runGit(t, dir, "add", ".")
+	runGit(t, dir, "commit", "-q", "-m", "base")
+
+	// The outer context is long on purpose: only the kill after the limit may
+	// end the call quickly, not the context deadline.
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+
+	start := time.Now()
+	_, err := ReadFile(ctx, dir, "HEAD", ".flux-diff.yaml")
+	if err == nil {
+		t.Fatal("want an error for a blob over the limit")
+	}
+	if elapsed := time.Since(start); elapsed > 20*time.Second {
+		t.Errorf("took %v, git was probably left blocked on a full pipe", elapsed)
 	}
 }
