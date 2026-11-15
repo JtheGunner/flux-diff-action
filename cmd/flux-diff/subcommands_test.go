@@ -282,3 +282,48 @@ func TestCLI_ConfigBaseRev_IgnoresNestedRepositoryInPath(t *testing.T) {
 		t.Errorf("flate args %q do not come from the outer repository", got)
 	}
 }
+
+func TestCLI_Comment_NotFoundFallsBackToSummaryWithAWarning(t *testing.T) {
+	const fakeToken = "FAKE-DO-NOT-USE-token"
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = io.WriteString(w, "FAKE-DO-NOT-USE-response-body")
+	}))
+	t.Cleanup(server.Close)
+
+	t.Setenv("GITHUB_TOKEN", fakeToken)
+	t.Setenv("GITHUB_REPOSITORY", "octo/wrong-repo")
+	t.Setenv("GITHUB_API_URL", server.URL)
+	dir := t.TempDir()
+	body := writeFile(t, dir, "body.md", "<!-- flux-diff -->\nhello\n")
+	summary := filepath.Join(dir, "summary.md")
+
+	out, err := execute(t, "comment", "--pr", "3", "--body-file", body, "--step-summary", summary)
+	if err != nil {
+		t.Fatalf("comment: %v", err)
+	}
+	for _, want := range []string{"outcome=step-summary", "the comment could not be written"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output %q lacks %q", out, want)
+		}
+	}
+	if strings.Contains(out, fakeToken) || strings.Contains(out, "FAKE-DO-NOT-USE-response-body") {
+		t.Errorf("output leaks the token or the response body: %q", out)
+	}
+}
+
+func TestCLI_Comment_ForkDoesNotWarn(t *testing.T) {
+	t.Setenv("GITHUB_TOKEN", "")
+	t.Setenv("GITHUB_REPOSITORY", "octo/repo")
+	dir := t.TempDir()
+	body := writeFile(t, dir, "body.md", "<!-- flux-diff -->\nfork\n")
+
+	out, err := execute(t, "comment", "--pr", "3", "--body-file", body, "--fork", "--step-summary", filepath.Join(dir, "s.md"))
+	if err != nil {
+		t.Fatalf("comment: %v", err)
+	}
+	if strings.Contains(out, "could not be written") {
+		t.Errorf("a fork PR is expected to use the summary, but got a warning: %q", out)
+	}
+}

@@ -101,7 +101,7 @@ func newCommentCommand() *cobra.Command {
 			"Fork PRs and read-only tokens fall back to the step summary file.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runComment(cmd.Context(), opts, cmd.OutOrStdout())
+			return runComment(cmd.Context(), opts, cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
 	flags := cmd.Flags()
@@ -115,7 +115,7 @@ func newCommentCommand() *cobra.Command {
 	return cmd
 }
 
-func runComment(ctx context.Context, opts commentOptions, out io.Writer) error {
+func runComment(ctx context.Context, opts commentOptions, out, errOut io.Writer) error {
 	if opts.bodyFile == "" {
 		return errors.New("--body-file is required")
 	}
@@ -139,6 +139,15 @@ func runComment(ctx context.Context, opts commentOptions, out io.Writer) error {
 	}, opts.pr, opts.marker, body)
 	if err != nil {
 		return fmt.Errorf("post comment: %w", err)
+	}
+
+	// A fork PR is expected to land in the step summary. Any other fallback
+	// (403 or 404 from the API) may be a wrong repository or pull request
+	// number, so say so; the message is fixed and carries no response content.
+	if result.Outcome == ghcomment.StepSummary && !opts.fork {
+		if _, err := fmt.Fprintln(errOut, "flux-diff: the comment could not be written (no permission, or the repository or pull request was not found); the diff was written to the step summary"); err != nil {
+			return fmt.Errorf("write warning: %w", err)
+		}
 	}
 
 	return writeOutputs(out,

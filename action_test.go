@@ -3,6 +3,8 @@
 package fluxdiffaction_test
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -20,6 +22,7 @@ type actionFile struct {
 		Using string `yaml:"using"`
 		Steps []struct {
 			Name string            `yaml:"name"`
+			If   string            `yaml:"if"`
 			Uses string            `yaml:"uses"`
 			Run  string            `yaml:"run"`
 			Env  map[string]string `yaml:"env"`
@@ -261,5 +264,127 @@ func TestAction_ValidateInputsAcceptsPreReleaseTagsOnly(t *testing.T) {
 		if got := runStep(t, "Validate inputs", 0, env).exitCode; got != wantExit {
 			t.Errorf("version %q: exit %d, want %d", version, got, wantExit)
 		}
+	}
+}
+
+// The report step must stay quiet when the diff step never ran: its exit-code
+// output is then empty, which is not a failure to report.
+func TestAction_ReportResultRequiresTheDiffStepToHaveRun(t *testing.T) {
+	action, _ := loadAction(t)
+	for _, step := range action.Runs.Steps {
+		if step.Name != "Report result" {
+			continue
+		}
+		if !strings.Contains(step.If, "steps.diff.outputs.exit-code != ''") || !strings.Contains(step.If, "steps.diff.outputs.exit-code != '0'") {
+			t.Errorf("Report result runs without checking that the diff step produced an exit code: %q", step.If)
+		}
+
+		return
+	}
+	t.Fatal("no step named Report result")
+}
+
+// installFixture lays out release assets and a curl stub that serves them, so
+// the "Install flux-diff" script runs without network access.
+type installFixture struct {
+	assets string
+	bin    string
+	temp   string
+}
+
+func newInstallFixture(t *testing.T, version, checksumFor string) installFixture {
+	t.Helper()
+
+	root := t.TempDir()
+	fixture := installFixture{
+		assets: filepath.Join(root, "assets"),
+		bin:    filepath.Join(root, "bin"),
+		temp:   filepath.Join(root, "runner-temp"),
+	}
+	for _, dir := range []string{fixture.assets, fixture.bin, fixture.temp} {
+		if err := os.MkdirAll(dir, 0o750); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	asset := "flux-diff_" + strings.TrimPrefix(version, "v") + "_linux_amd64.tar.gz"
+	staging := filepath.Join(root, "staging")
+	if err := os.MkdirAll(staging, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(staging, "flux-diff"), []byte("#!/bin/sh\necho FAKE-FLUX-DIFF\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	archive := filepath.Join(fixture.assets, asset)
+	if out, err := exec.Command("tar", "-czf", archive, "-C", staging, "flux-diff").CombinedOutput(); err != nil {
+		t.Fatalf("tar: %v\n%s", err, out)
+	}
+
+	data, err := os.ReadFile(archive) //nolint:gosec // test fixture path
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256(data)
+	hash := hex.EncodeToString(digest[:])
+	if checksumFor == "tampered" {
+		hash = strings.Repeat("0", 64)
+	}
+	line := hash + "  " + asset + "\n"
+	if checksumFor == "missing" {
+		line = hash + "  some-other-asset.tar.gz\n"
+	}
+	if err := os.WriteFile(filepath.Join(fixture.assets, "checksums.txt"), []byte(line), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// The stub copies the asset named by the URL's last path element.
+	stub := "#!/bin/sh\nout=\"\"\nwhile [ $# -gt 0 ]; do\n  case \"$1\" in\n    --output) out=\"$2\"; shift ;;\n    http*) url=\"$1\" ;;\n  esac\n  shift\ndone\ncp \"$ASSET_DIR/${url##*/}\" \"$out\"\n"
+	if err := os.WriteFile(filepath.Join(fixture.bin, "curl"), []byte(stub), 0o700); err != nil { //nolint:gosec // test stub must be executable
+		t.Fatal(err)
+	}
+
+	return fixture
+}
+
+func (f installFixture) run(t *testing.T, version string) stepRun {
+	t.Helper()
+
+	return runStep(t, "Install flux-diff", 0, map[string]string{
+		"PATH":              f.bin + ":" + os.Getenv("PATH"),
+		"ASSET_DIR":         f.assets,
+		"RUNNER_TEMP":       f.temp,
+		"RUNNER_OS":         "Linux",
+		"RUNNER_ARCH":       "X64",
+		"ACTION_REPOSITORY": "octo/flux-diff-action",
+		"INPUT_VERSION":     version,
+	})
+}
+
+func TestAction_InstallFluxDiffVerifiesTheChecksumBeforeExtracting(t *testing.T) {
+	const version = "v0.1.0-rc.1"
+
+	cases := map[string]struct {
+		checksum   string
+		wantExit   int
+		wantBinary bool
+	}{
+		"good":     {"good", 0, true},
+		"tampered": {"tampered", 1, false},
+		"missing":  {"missing", 1, false},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			fixture := newInstallFixture(t, version, tc.checksum)
+
+			run := fixture.run(t, version)
+
+			if run.exitCode != tc.wantExit {
+				t.Fatalf("exit = %d, want %d\n%s", run.exitCode, tc.wantExit, run.stdout)
+			}
+			_, err := os.Stat(filepath.Join(fixture.temp, "flux-diff-action", "bin", "flux-diff"))
+			if installed := err == nil; installed != tc.wantBinary {
+				t.Errorf("binary installed = %v, want %v", installed, tc.wantBinary)
+			}
+		})
 	}
 }
