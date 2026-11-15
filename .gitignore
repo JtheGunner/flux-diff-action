@@ -10,3 +10,6 @@
 # Coverage output
 *.out
 coverage.*
+
+# IDE
+/.idea/
