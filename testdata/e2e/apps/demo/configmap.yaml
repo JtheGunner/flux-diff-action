@@ -5,3 +5,4 @@ metadata:
   namespace: default
 data:
   logLevel: info
+  smokeKey: v0.1.0
