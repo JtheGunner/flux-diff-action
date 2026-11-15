@@ -21,13 +21,23 @@ var ErrSecretNotSkipped = errors.New("--skip-kinds must include Secret")
 // least Secret and CustomResourceDefinition. A missing flag is added; a
 // user-supplied list (separate value or --skip-kinds=X form, repeated or
 // empty) that lacks Secret is rejected, a list lacking only
-// CustomResourceDefinition is extended. The input slice is not modified.
+// CustomResourceDefinition is extended. The flag is placed before a bare
+// "--" argument terminator, and anything after it is left untouched. The input slice is not modified.
 func EnforceSkipKinds(args []string) ([]string, error) {
 	kinds := append([]string(nil), requiredSkipKinds...)
 	rest := make([]string, 0, len(args)+1)
 
+	var tail []string
+
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
+
+		// Everything after a bare "--" is positional; the forced flag must
+		// come before it to be parsed as a flag.
+		if arg == "--" {
+			tail = append(tail, args[i:]...)
+			break
+		}
 
 		var value string
 		switch {
@@ -55,7 +65,9 @@ func EnforceSkipKinds(args []string) ([]string, error) {
 		}
 	}
 
-	return append(rest, skipKindsFlag+"="+strings.Join(kinds, ",")), nil
+	rest = append(rest, skipKindsFlag+"="+strings.Join(kinds, ","))
+
+	return append(rest, tail...), nil
 }
 
 func splitKinds(value string) []string {

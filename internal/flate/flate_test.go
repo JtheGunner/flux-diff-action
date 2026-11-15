@@ -329,3 +329,39 @@ func TestRun_RejectsArgsRemovingSecretFromSkipKinds(t *testing.T) {
 		t.Fatal("want error when --skip-kinds drops Secret")
 	}
 }
+
+func TestRun_DoesNotPassFlateEnvironmentToTheProcess(t *testing.T) {
+	binary := fakeFlate(t, "flate version "+MinVersion, "changes.json", "", "0")
+	envFile := filepath.Join(t.TempDir(), "env")
+	script := "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo \"$FAKE_FLATE_VERSION\"; exit 0; fi\nenv > " + envFile + "\ncat \"$FAKE_FLATE_STDOUT\"\n"
+	if err := os.WriteFile(binary, []byte(script), 0o700); err != nil {
+		t.Fatalf("write fake binary: %v", err)
+	}
+	t.Setenv("FLATE_SKIP_KINDS", "ConfigMap")
+	t.Setenv("FLATE_LOG_LEVEL", "debug")
+	t.Setenv("FAKE_KEEP_ME", "kept")
+
+	if _, err := Run(context.Background(), Options{Binary: binary}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	recorded, err := os.ReadFile(envFile)
+	if err != nil {
+		t.Fatalf("read recorded env: %v", err)
+	}
+	var sawKept, sawPath bool
+	for _, line := range strings.Split(string(recorded), "\n") {
+		name, _, _ := strings.Cut(line, "=")
+		switch {
+		case strings.HasPrefix(name, "FLATE_"):
+			t.Errorf("flate process received %s", name)
+		case name == "FAKE_KEEP_ME":
+			sawKept = true
+		case name == "PATH":
+			sawPath = true
+		}
+	}
+	if !sawKept || !sawPath {
+		t.Error("non-FLATE variables (FAKE_KEEP_ME, PATH) were dropped")
+	}
+}

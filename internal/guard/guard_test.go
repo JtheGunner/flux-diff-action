@@ -371,3 +371,27 @@ func TestNoSecretValueInAnyOutput(t *testing.T) {
 		}
 	})
 }
+
+func TestEnforceSkipKinds_PlacesFlagBeforeArgumentTerminator(t *testing.T) {
+	got, err := EnforceSkipKinds([]string{"diff", "--", "extra"})
+	if err != nil {
+		t.Fatalf("EnforceSkipKinds: %v", err)
+	}
+
+	want := "diff --skip-kinds=Secret,CustomResourceDefinition -- extra"
+	if strings.Join(got, " ") != want {
+		t.Errorf("args = %q, want %q", strings.Join(got, " "), want)
+	}
+}
+
+func TestEnforceSkipKinds_IgnoresSkipKindsAfterTerminator(t *testing.T) {
+	got, err := EnforceSkipKinds([]string{"--", "--skip-kinds="})
+	if err != nil {
+		t.Fatalf("EnforceSkipKinds: %v", err)
+	}
+
+	want := "--skip-kinds=Secret,CustomResourceDefinition -- --skip-kinds="
+	if strings.Join(got, " ") != want {
+		t.Errorf("args = %q, want %q", strings.Join(got, " "), want)
+	}
+}
