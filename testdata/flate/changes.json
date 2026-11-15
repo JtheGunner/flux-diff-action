@@ -31,6 +31,7 @@
       "kind": "Namespace",
       "name": "demo-extra",
       "status": "added",
+      "old": null,
       "new": {
         "apiVersion": "v1",
         "kind": "Namespace",
@@ -43,6 +44,7 @@
       "namespace": "demo",
       "name": "demo-old",
       "status": "removed",
+      "new": null,
       "old": {
         "apiVersion": "apps/v1",
         "kind": "Deployment",

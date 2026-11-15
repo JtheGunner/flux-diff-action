@@ -20,10 +20,12 @@ type diffOp struct {
 }
 
 // manifestLines renders a raw manifest as stable, indented JSON lines. An
-// empty manifest yields no lines. Unparseable input is kept verbatim: the
+// empty or JSON null manifest (flate reports a missing side that way) yields
+// no lines. Unparseable input is kept verbatim: the
 // guard has already masked it.
 func manifestLines(raw json.RawMessage) []string {
-	if len(bytes.TrimSpace(raw)) == 0 {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
 		return nil
 	}
 
