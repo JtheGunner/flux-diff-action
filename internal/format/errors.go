@@ -39,7 +39,7 @@ func FailureSummary(r model.Result) string {
 // only partially rendered. The result must already be masked.
 func PartialSummary(r model.Result) string {
 	var parts []string
-	for _, item := range incompleteItems(model.Result{Warnings: r.Warnings, Unparsed: r.Unparsed}) {
+	for _, item := range incompleteItems(model.Result{Warnings: r.Warnings, Unparsed: r.Unparsed, BrokenInBothSides: r.BrokenInBothSides}) {
 		if item.category == "Warning" {
 			continue
 		}
@@ -53,9 +53,10 @@ func PartialSummary(r model.Result) string {
 }
 
 // IsPartial reports whether some unit was only partially rendered: a SOPS or
-// external-source warning, or flate output that could not be parsed.
+// external-source warning, a unit broken in base and head, or flate output
+// that could not be parsed.
 func IsPartial(r model.Result) bool {
-	if len(r.Unparsed) > 0 {
+	if len(r.Unparsed) > 0 || len(r.BrokenInBothSides) > 0 {
 		return true
 	}
 	for _, warning := range r.Warnings {

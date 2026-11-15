@@ -155,6 +155,25 @@ func TestMarkdown_SeveralExpectedNoticesShareOneCollapsedBlock(t *testing.T) {
 	}
 }
 
+func TestMarkdown_UnitsBrokenInBothSidesShareOneCollapsedBlock(t *testing.T) {
+	r := model.Result{BrokenInBothSides: []model.BrokenUnit{
+		{Kind: "Kustomization", Namespace: "flux-system", Name: "a", Blocks: []string{"flux-system/b"}},
+		{Kind: "HelmRelease", Namespace: "demo", Name: "c"},
+	}}
+	body, _ := Markdown(r, MarkdownOptions{})
+
+	for _, want := range []string{
+		"<summary><b>Already broken in base and head:</b> 2 notices</summary>",
+		"Kustomization flux-system/a (blocks: flux-system/b); reason not shown, run flate build locally to see it",
+		"HelmRelease demo/c; reason not shown",
+		"Result is incomplete: no changes could be confirmed",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing %q in:\n%s", want, body)
+		}
+	}
+}
+
 func TestMarkdown_SingleExpectedNoticeStaysIndividual(t *testing.T) {
 	body, _ := Markdown(model.Result{Warnings: []model.Warning{sopsWarning("one")}}, MarkdownOptions{})
 
@@ -353,6 +372,7 @@ func TestIsPartial(t *testing.T) {
 		{Unparsed: []string{"x"}},
 		{Warnings: []model.Warning{{Code: "SOPSUnreadable"}}},
 		{Warnings: []model.Warning{{Code: "ExternalSource"}}},
+		{BrokenInBothSides: []model.BrokenUnit{{Kind: "Kustomization", Name: "a"}}},
 	} {
 		if !IsPartial(r) {
 			t.Errorf("want partial: %+v", r)

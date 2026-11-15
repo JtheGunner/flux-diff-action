@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Units that fail identically in base and head are now named in the comment as
+  "Already broken in base and head", with the units they block. The reason is
+  intentionally not shown, because its text cannot be masked for a unit that has
+  no objects in the diff. flux-diff finds them with one extra `flate build` of
+  the head (Secrets skipped) and keeps the failures that flate's diff did not
+  report. The notice does not change the exit code; `--strict` turns it into a
+  failure like any other partial result. Text and JSON output carry it too
+  (`BrokenInBothSides`). If `flate build` exits 1 without a failure line in a
+  known format, the run fails with a fixed error instead of looking clean.
+
 ### Changed
 
 - The Markdown comment folds several `SOPSUnreadable` or `ExternalSource` notices

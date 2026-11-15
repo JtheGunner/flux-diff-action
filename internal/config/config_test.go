@@ -145,6 +145,20 @@ func TestFlateArgs_MapsSupplyAPIVersionsAndStrip(t *testing.T) {
 	}
 }
 
+func TestBuildArgs_OmitsFlagsFlateBuildDoesNotAccept(t *testing.T) {
+	cfg := Config{
+		Supply:         []string{"/r/a.yaml"},
+		StripAttr:      []string{"example.com/hash"},
+		StripField:     []string{"spec.replicas"},
+		RegistryConfig: "/r/config.json",
+	}
+
+	want := []string{"--supply=/r/a.yaml", "--registry-config=/r/config.json"}
+	if got := cfg.BuildArgs(); !reflect.DeepEqual(got, want) {
+		t.Errorf("BuildArgs = %v, want %v", got, want)
+	}
+}
+
 func TestFlateArgs_NeverRemovesSecretFromSkipKinds(t *testing.T) {
 	for _, extra := range [][]string{{"Namespace"}, {"ConfigMap", "CustomResourceDefinition"}, {"Deployment"}} {
 		args := Config{ExtraSkipKinds: extra}.FlateArgs()

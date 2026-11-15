@@ -76,7 +76,7 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 		return Result{}, fmt.Errorf("refusing to run flate: %w", err)
 	}
 
-	stdout, stderr, exitCode, err := execute(ctx, binary, args)
+	stdout, stderr, exitCode, err := execute(ctx, binary, args, true)
 	if err != nil {
 		return Result{}, err
 	}
@@ -108,7 +108,7 @@ func buildArgs(opts Options) []string {
 }
 
 func checkVersion(ctx context.Context, binary string) error {
-	stdout, _, exitCode, err := execute(ctx, binary, []string{"--version"})
+	stdout, _, exitCode, err := execute(ctx, binary, []string{"--version"}, true)
 	if err != nil {
 		return err
 	}
@@ -136,13 +136,16 @@ func checkVersion(ctx context.Context, binary string) error {
 
 // execute runs the binary and returns its streams and exit code. A non-zero
 // exit code is not an error; failing to start or finish the process is.
-func execute(ctx context.Context, binary string, args []string) (stdout, stderr []byte, exitCode int, err error) {
+// Without keepStdout, stdout is discarded unread and returned empty.
+func execute(ctx context.Context, binary string, args []string, keepStdout bool) (stdout, stderr []byte, exitCode int, err error) {
 	var outBuf, errBuf limitedBuffer
 	outBuf.limit, errBuf.limit = maxOutputBytes, maxOutputBytes
 
 	cmd := exec.CommandContext(ctx, binary, args...)
 	cmd.Env = environmentWithoutFlateVariables(os.Environ())
-	cmd.Stdout = &outBuf
+	if keepStdout {
+		cmd.Stdout = &outBuf
+	}
 	cmd.Stderr = &errBuf
 
 	runErr := cmd.Run()

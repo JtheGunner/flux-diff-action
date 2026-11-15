@@ -320,6 +320,16 @@ var flateDefaultStripAttr = []string{"helm.sh/chart", "checksum/", "app.kubernet
 // Secret leads the --skip-kinds list, and the guard that runs before flate
 // adds the remaining required kinds.
 func (c Config) FlateArgs() []string {
+	return c.flateArgs(true)
+}
+
+// BuildArgs is FlateArgs limited to the flags `flate build` accepts: it has no
+// --strip-attr and no --strip-field.
+func (c Config) BuildArgs() []string {
+	return c.flateArgs(false)
+}
+
+func (c Config) flateArgs(withStrip bool) []string {
 	var args []string
 
 	for _, path := range c.Supply {
@@ -328,13 +338,15 @@ func (c Config) FlateArgs() []string {
 	if len(c.APIVersions) > 0 {
 		args = append(args, "--api-versions="+strings.Join(c.APIVersions, ","))
 	}
-	if len(c.StripAttr) > 0 {
+	if withStrip && len(c.StripAttr) > 0 {
 		for _, attr := range mergeUnique(flateDefaultStripAttr, c.StripAttr) {
 			args = append(args, "--strip-attr="+attr)
 		}
 	}
-	for _, field := range c.StripField {
-		args = append(args, "--strip-field="+field)
+	if withStrip {
+		for _, field := range c.StripField {
+			args = append(args, "--strip-field="+field)
+		}
 	}
 	if len(c.ExtraSkipKinds) > 0 {
 		args = append(args, "--skip-kinds="+strings.Join(mergeUnique([]string{"Secret"}, c.ExtraSkipKinds), ","))

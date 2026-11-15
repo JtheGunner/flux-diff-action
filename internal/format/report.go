@@ -17,6 +17,8 @@ import (
 const (
 	codeSOPSUnreadable = "SOPSUnreadable"
 	codeExternalSource = "ExternalSource"
+
+	categoryBrokenInBothSides = "Already broken in base and head"
 )
 
 type counts struct {
@@ -54,7 +56,7 @@ type incompleteItem struct {
 
 // isIncomplete reports whether the result must not be presented as clean.
 func isIncomplete(r model.Result) bool {
-	return len(r.Failures) > 0 || len(r.Warnings) > 0 || len(r.Unparsed) > 0 || r.ExitCode != 0
+	return len(r.Failures) > 0 || len(r.BrokenInBothSides) > 0 || len(r.Warnings) > 0 || len(r.Unparsed) > 0 || r.ExitCode != 0
 }
 
 func incompleteItems(r model.Result) []incompleteItem {
@@ -66,6 +68,10 @@ func incompleteItems(r model.Result) []incompleteItem {
 			text += " (" + failure.Snapshot + " snapshot)"
 		}
 		items = append(items, incompleteItem{category: "Failed", text: text + ": " + failure.Reason})
+	}
+
+	for _, unit := range r.BrokenInBothSides {
+		items = append(items, incompleteItem{category: categoryBrokenInBothSides, text: describeBroken(unit), expected: true})
 	}
 
 	for _, warning := range r.Warnings {
@@ -98,6 +104,17 @@ func warningCategory(code string) string {
 	default:
 		return "Warning"
 	}
+}
+
+// describeBroken renders a unit that fails identically in base and head and
+// the units it blocks. The reason is never shown: it cannot be masked.
+func describeBroken(unit model.BrokenUnit) string {
+	text := describeRef(unit.Kind, unit.Namespace, unit.Name)
+	if len(unit.Blocks) > 0 {
+		text += " (blocks: " + strings.Join(unit.Blocks, ", ") + ")"
+	}
+
+	return text + "; reason not shown, run flate build locally to see it"
 }
 
 func describeWarning(warning model.Warning) string {

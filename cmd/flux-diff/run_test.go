@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"flag"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -24,6 +25,10 @@ func fakeFlate(t *testing.T, stdoutFixture, stderrFixture, exitCode string) stri
 if [ "$1" = "--version" ]; then
   echo "flate v0.7.3"
   exit 0
+fi
+if [ "$1" = "build" ]; then
+  if [ -n "$FAKE_FLATE_BUILD_STDERR" ]; then cat "$FAKE_FLATE_BUILD_STDERR" >&2; fi
+  exit "${FAKE_FLATE_BUILD_EXIT:-0}"
 fi
 if [ -n "$FAKE_FLATE_ARGS" ]; then printf '%s\n' "$@" > "$FAKE_FLATE_ARGS"; fi
 if [ -n "$FAKE_FLATE_STDOUT" ]; then cat "$FAKE_FLATE_STDOUT"; fi
@@ -163,6 +168,100 @@ func TestCLI_ExitCodes(t *testing.T) {
 				t.Errorf("error = %v, want containing %q", err, tc.wantErr)
 			}
 		})
+	}
+}
+
+// buildFlate points the fake flate's build subcommand at a stderr fixture.
+func buildFlate(t *testing.T, diffStderr, diffExit, buildStderr, buildExit string) string {
+	t.Helper()
+
+	binary := fakeFlate(t, "changes.json", diffStderr, diffExit)
+	t.Setenv("FAKE_FLATE_BUILD_STDERR", fixtureAbs(t, buildStderr))
+	t.Setenv("FAKE_FLATE_BUILD_EXIT", buildExit)
+
+	return binary
+}
+
+func TestCLI_BrokenInBothSides_IsNamedWithReasonAndKeepsExitCode(t *testing.T) {
+	binary := buildFlate(t, "", "0", "build-stderr-blocked.txt", "1")
+
+	out, err := execute(t, "--flate-binary", binary)
+	if err != nil {
+		t.Fatalf("a unit broken in base and head must not fail the run: %v", err)
+	}
+
+	for _, want := range []string{
+		"Already broken in base and head",
+		"Kustomization flux-system/broken-app",
+		"blocks: flux-system/good-app",
+		"reason not shown",
+		"Result is incomplete",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output lacks %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestCLI_BrokenInBothSides_StrictFailsTheRun(t *testing.T) {
+	binary := buildFlate(t, "", "0", "build-stderr-broken.txt", "1")
+
+	_, err := execute(t, "--flate-binary", binary, "--strict")
+	if err == nil || !strings.Contains(err.Error(), "Already broken in base and head") {
+		t.Errorf("--strict error = %v, want it to name the broken unit", err)
+	}
+}
+
+func TestCLI_BrokenOnOneSideOnly_StaysANormalFailure(t *testing.T) {
+	binary := buildFlate(t, "stderr-one-sided-failure.txt", "1", "build-stderr-broken.txt", "1")
+
+	out, err := execute(t, "--flate-binary", binary)
+	if err == nil || !strings.Contains(err.Error(), "unit(s) failed") {
+		t.Errorf("error = %v, want a normal unit failure", err)
+	}
+	if strings.Contains(out, "Already broken in base and head") {
+		t.Errorf("a unit the diff reports must not be listed as broken in both sides:\n%s", out)
+	}
+}
+
+// The reason of a unit broken in base and head is never shown: the diff holds
+// no objects for it, so a value quoted in the reason could not be masked. The
+// value below is deliberately not among the values of the diff's changes.
+func TestCLI_BrokenInBothSides_ReasonNeverReachesAnyOutput(t *testing.T) {
+	const reasonOnlyValue = "FAKE-DO-NOT-USE-build-only-value"
+
+	binary := buildFlate(t, "", "0", "build-stderr-secret-failure.txt", "1")
+
+	for _, outputFormat := range []string{"markdown", "text", "json"} {
+		for _, strict := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s strict=%t", outputFormat, strict), func(t *testing.T) {
+				args := []string{"--flate-binary", binary, "--format", outputFormat}
+				if strict {
+					args = append(args, "--strict")
+				}
+
+				out, err := execute(t, args...)
+				if !strings.Contains(out, "broken-app") {
+					t.Fatalf("broken unit missing from output:\n%s", out)
+				}
+				if strict && (err == nil || !strings.Contains(err.Error(), "broken-app")) {
+					t.Errorf("--strict error = %v, want it to name the unit", err)
+				}
+				for _, text := range []string{out, fmt.Sprint(err)} {
+					if strings.Contains(text, reasonOnlyValue) || strings.Contains(text, "rendering failed") {
+						t.Errorf("the reason leaked into %s output or error: %s", outputFormat, text)
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestCLI_UnexpectedBuildExitCodeFailsTheRun(t *testing.T) {
+	binary := buildFlate(t, "", "0", "", "2")
+
+	if _, err := execute(t, "--flate-binary", binary); err == nil {
+		t.Error("an unexpected flate build exit code must fail the run")
 	}
 }
 
