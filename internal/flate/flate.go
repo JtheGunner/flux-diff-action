@@ -11,6 +11,7 @@ import (
 	"io/fs"
 	"os/exec"
 
+	"github.com/JtheGunner/flux-diff-action/internal/guard"
 	"github.com/JtheGunner/flux-diff-action/internal/model"
 )
 
@@ -63,7 +64,12 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 		return Result{}, err
 	}
 
-	stdout, stderr, exitCode, err := execute(ctx, binary, buildArgs(opts))
+	args, err := guard.EnforceSkipKinds(buildArgs(opts))
+	if err != nil {
+		return Result{}, fmt.Errorf("refusing to run flate: %w", err)
+	}
+
+	stdout, stderr, exitCode, err := execute(ctx, binary, args)
 	if err != nil {
 		return Result{}, err
 	}
