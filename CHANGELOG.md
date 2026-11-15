@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The Markdown comment folds several `SOPSUnreadable` or `ExternalSource` notices
   into one collapsed block per code with a counter. Failures and other warnings
   stay individual; text and JSON output are unchanged.
+- Keys matched by `maskPatterns` stay readable in the diff; only their value is
+  masked. Previously the key name was often replaced by `<masked>` as well.
 
 ## [0.1.0] - 2026-11-15
 

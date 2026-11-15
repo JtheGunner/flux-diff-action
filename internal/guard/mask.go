@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/JtheGunner/flux-diff-action/internal/model"
@@ -179,26 +180,19 @@ func (m *Masker) maskRaw(
 		return json.RawMessage(`"` + maskedUnparseable + `"`)
 	}
 
-	masked := scrubTree(m.redact(tree, nil, secret, own, other, isNew), known)
+	masked := scrubTree(m.redact(tree, nil, secret, own, other, isNew, known), known)
 
 	encoded, err := marshalNoEscape(masked)
 	if err != nil {
 		return json.RawMessage(`"` + maskedUnparseable + `"`)
 	}
 
-	// Defence in depth: the tree was already scrubbed value by value, so this
-	// only catches forms that survive in the encoded bytes.
-	scrubbed := []byte(MaskString(string(encoded), known))
-	if !json.Valid(scrubbed) {
-		return json.RawMessage(`"` + maskedUnparseable + `"`)
-	}
-
-	return scrubbed
+	return encoded
 }
 
-// scrubTree applies MaskString to every string value and map key of node, so
-// known values are removed from their decoded form rather than from the
-// JSON-escaped bytes. It returns a new tree.
+// scrubTree applies MaskString to every string value of node, so known values
+// are removed from their decoded form rather than from the JSON-escaped bytes.
+// Map keys are scrubbed by redact. It returns a new tree.
 func scrubTree(node any, known []string) any {
 	switch typed := node.(type) {
 	case string:
@@ -206,7 +200,7 @@ func scrubTree(node any, known []string) any {
 	case map[string]any:
 		out := make(map[string]any, len(typed))
 		for key, child := range typed {
-			out[MaskString(key, known)] = scrubTree(child, known)
+			out[key] = scrubTree(child, known)
 		}
 
 		return out
@@ -266,8 +260,12 @@ func (m *Masker) walk(node any, p []string, secret bool, visit func([]string, an
 	}
 }
 
-// redact returns a masked copy of node.
-func (m *Masker) redact(node any, p []string, secret bool, own, other map[string]any, isNew bool) any {
+// redact returns a masked copy of node. Keys are scrubbed against known; the
+// key of a masked value stays readable (see visibleKey).
+func (m *Masker) redact(
+	node any, p []string, secret bool,
+	own, other map[string]any, isNew bool, known []string,
+) any {
 	switch typed := node.(type) {
 	case map[string]any:
 		out := make(map[string]any, len(typed))
@@ -275,11 +273,11 @@ func (m *Masker) redact(node any, p []string, secret bool, own, other map[string
 			childPath := appendPath(p, key)
 			if masked, _ := m.isMasked(childPath, child, secret); masked {
 				if replacement, keep := replacementFor(childPath, own, other, isNew, false); keep {
-					out[key] = replacement
+					out[visibleKey(key, secret, known)] = replacement
 				}
 				continue
 			}
-			out[key] = m.redact(child, childPath, secret, own, other, isNew)
+			out[MaskString(key, known)] = m.redact(child, childPath, secret, own, other, isNew, known)
 		}
 
 		return out
@@ -291,13 +289,25 @@ func (m *Masker) redact(node any, p []string, secret bool, own, other map[string
 				out[i], _ = replacementFor(childPath, own, other, isNew, true)
 				continue
 			}
-			out[i] = m.redact(child, childPath, secret, own, other, isNew)
+			out[i] = m.redact(child, childPath, secret, own, other, isNew, known)
 		}
 
 		return out
 	default:
 		return node
 	}
+}
+
+// visibleKey returns the key under which a masked value is shown. The name
+// stays readable so a reviewer can tell which value changed; only the value is
+// masked. Keys inside a Secret keep the strict treatment, and a key that is
+// itself a known secret value is masked, so the name cannot leak the value.
+func visibleKey(key string, secret bool, known []string) string {
+	if secret || slices.Contains(known, key) {
+		return MaskString(key, known)
+	}
+
+	return key
 }
 
 // replacementFor decides what replaces the masked value at p. keep is false
