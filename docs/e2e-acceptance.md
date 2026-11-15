@@ -39,8 +39,11 @@ it in a throw-away sandbox repository after a flux-diff release exists.
    - The job succeeds.
    - Exactly one comment appears, starting with a hidden `<!-- flux-diff -->`
      marker. It shows the ConfigMap change.
-   - The Secret value appears masked. The new and old plain values appear
-     nowhere in the comment or in the job log.
+   - The Secret does not appear in the comment at all: flate skips `Secret`
+     objects, so nothing is shown, not even a masked value. The new and old
+     plain values appear nowhere in the comment or in the job log.
+   - Values under keys matched by `maskPatterns` in the base configuration
+     appear as `<masked>`.
 2. **Push another commit to the same PR.**
    - The existing comment is edited. No second comment is created.
 3. **Weaken the configuration in the PR.** Add `.flux-diff.yaml` changes that
@@ -48,7 +51,9 @@ it in a throw-away sandbox repository after a flux-diff release exists.
    - The comment is rendered with the configuration of the base revision. The
      weaker head configuration has no effect.
 4. **Large diff.** Change enough objects to exceed `max-comment-size`.
-   - The comment ends with a truncation notice.
+   - The comment ends with a truncation notice. The notice is generic and
+     points to `--format text` / `--format json`; the Action's complete report
+     is the artifact below.
    - The run has an artifact named `flux-diff-full` with the complete report.
 5. **Fork PR.** Open a pull request from a fork.
    - The job succeeds without writing a comment.
