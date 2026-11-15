@@ -252,7 +252,8 @@ Honest limits:
   Run `flate build` locally to read it. This relies on one assumption: flate
   stays silent in the diff for a failure that is identical on both sides. The
   notice does not change the exit code; with `--strict` it does, like any other
-  partial result. A unit that a pull request breaks, adds or deletes is
+  partial result. If `flate build` fails but prints no failure in a known
+  format, the run fails with a fixed error rather than looking clean. A unit that a pull request breaks, adds or deletes is
   reported as `failed` with a reason.
 
 ---

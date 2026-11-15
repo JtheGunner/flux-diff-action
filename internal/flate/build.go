@@ -2,6 +2,7 @@ package flate
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -9,6 +10,11 @@ import (
 	"github.com/JtheGunner/flux-diff-action/internal/guard"
 	"github.com/JtheGunner/flux-diff-action/internal/model"
 )
+
+// ErrBuildFailureUnreadable means flate build reported failure but no failed
+// unit could be read from its output. The message is fixed on purpose: it
+// never carries output text.
+var ErrBuildFailureUnreadable = errors.New("flate build exited 1 but reported no failure unit in a known format; update flux-diff or flate")
 
 var (
 	// "  ✗  Kind  ns/name  reason": `flate build` names no snapshot.
@@ -55,7 +61,12 @@ func Build(ctx context.Context, opts Options) ([]model.BrokenUnit, error) {
 		return nil, fmt.Errorf("flate build exited with unexpected code %d", exitCode)
 	}
 
-	return parseBuildFailures(string(stderr)), nil
+	units := parseBuildFailures(string(stderr))
+	if exitCode == 1 && len(units) == 0 {
+		return nil, ErrBuildFailureUnreadable
+	}
+
+	return units, nil
 }
 
 // parseBuildFailures reads the failed units, and the units each one blocks,

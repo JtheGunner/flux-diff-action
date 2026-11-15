@@ -2,6 +2,7 @@ package flate
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -94,6 +95,30 @@ func TestBrokenInBothSides(t *testing.T) {
 				t.Errorf("got %+v, want %+v", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestBuild_ExitOneWithoutReadableFailure_FailsWithoutLeakingOutput(t *testing.T) {
+	binary := fakeFlate(t, "flate version "+MinVersion, "", "build-stderr-unrecognised.txt", "1")
+
+	units, err := Build(context.Background(), Options{Binary: binary})
+	if !errors.Is(err, ErrBuildFailureUnreadable) {
+		t.Fatalf("error = %v, want ErrBuildFailureUnreadable", err)
+	}
+	if len(units) != 0 {
+		t.Errorf("units = %+v, want none", units)
+	}
+	if strings.Contains(err.Error(), "FAKE-DO-NOT-USE") {
+		t.Errorf("error carries stderr text: %v", err)
+	}
+}
+
+func TestBuild_ExitZeroIsClean(t *testing.T) {
+	binary := fakeFlate(t, "flate version "+MinVersion, "", "", "0")
+
+	units, err := Build(context.Background(), Options{Binary: binary})
+	if err != nil || len(units) != 0 {
+		t.Errorf("units = %+v, err = %v, want a clean result", units, err)
 	}
 }
 
