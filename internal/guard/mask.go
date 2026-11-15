@@ -172,19 +172,47 @@ func (m *Masker) maskRaw(
 		return json.RawMessage(`"` + maskedUnparseable + `"`)
 	}
 
-	masked := m.redact(tree, nil, secret, own, other, isNew)
+	masked := scrubTree(m.redact(tree, nil, secret, own, other, isNew), known)
 
 	encoded, err := marshalNoEscape(masked)
 	if err != nil {
 		return json.RawMessage(`"` + maskedUnparseable + `"`)
 	}
 
+	// Defence in depth: the tree was already scrubbed value by value, so this
+	// only catches forms that survive in the encoded bytes.
 	scrubbed := []byte(MaskString(string(encoded), known))
 	if !json.Valid(scrubbed) {
 		return json.RawMessage(`"` + maskedUnparseable + `"`)
 	}
 
 	return scrubbed
+}
+
+// scrubTree applies MaskString to every string value and map key of node, so
+// known values are removed from their decoded form rather than from the
+// JSON-escaped bytes. It returns a new tree.
+func scrubTree(node any, known []string) any {
+	switch typed := node.(type) {
+	case string:
+		return MaskString(typed, known)
+	case map[string]any:
+		out := make(map[string]any, len(typed))
+		for key, child := range typed {
+			out[MaskString(key, known)] = scrubTree(child, known)
+		}
+
+		return out
+	case []any:
+		out := make([]any, len(typed))
+		for i, child := range typed {
+			out[i] = scrubTree(child, known)
+		}
+
+		return out
+	default:
+		return node
+	}
 }
 
 // location is one masked place in an object.

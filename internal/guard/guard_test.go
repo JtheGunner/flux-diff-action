@@ -115,12 +115,15 @@ func TestEnforceSkipKinds_ForcesRequiredKinds(t *testing.T) {
 		want string
 	}{
 		"flag absent":        {[]string{"diff"}, "diff --skip-kinds=Secret,CustomResourceDefinition"},
-		"adds missing CRD":   {[]string{"--skip-kinds", "Secret", "-p", "x"}, "-p x --skip-kinds=Secret,CustomResourceDefinition"},
+		"forced flag first":  {[]string{"diff", "-p", "x"}, "diff --skip-kinds=Secret,CustomResourceDefinition -p x"},
+		"case-insensitive":   {[]string{"--skip-kinds=secret"}, "--skip-kinds=Secret,CustomResourceDefinition"},
+		"flag as value":      {[]string{"--path", "--skip-kinds="}, "--skip-kinds=Secret,CustomResourceDefinition --path --skip-kinds="},
+		"adds missing CRD":   {[]string{"--skip-kinds", "Secret", "-p", "x"}, "--skip-kinds=Secret,CustomResourceDefinition -p x"},
 		"keeps extra kinds":  {[]string{"--skip-kinds=Secret,Job"}, "--skip-kinds=Secret,CustomResourceDefinition,Job"},
 		"merges repeated":    {[]string{"--skip-kinds=Secret,Job", "--skip-kinds=Secret,Pod"}, "--skip-kinds=Secret,CustomResourceDefinition,Job,Pod"},
 		"trims whitespace":   {[]string{"--skip-kinds= Secret , Job"}, "--skip-kinds=Secret,CustomResourceDefinition,Job"},
 		"nil args":           {nil, "--skip-kinds=Secret,CustomResourceDefinition"},
-		"keeps other values": {[]string{"--other", "--skip-kinds=Secret"}, "--other --skip-kinds=Secret,CustomResourceDefinition"},
+		"keeps other values": {[]string{"--other", "--skip-kinds=Secret"}, "--skip-kinds=Secret,CustomResourceDefinition --other"},
 	}
 
 	for name, tc := range cases {
@@ -372,26 +375,83 @@ func TestNoSecretValueInAnyOutput(t *testing.T) {
 	})
 }
 
-func TestEnforceSkipKinds_PlacesFlagBeforeArgumentTerminator(t *testing.T) {
-	got, err := EnforceSkipKinds([]string{"diff", "--", "extra"})
-	if err != nil {
-		t.Fatalf("EnforceSkipKinds: %v", err)
+func TestEnforceSkipKinds_RejectsAmbiguousArgs(t *testing.T) {
+	cases := map[string][]string{
+		"terminator":             {"diff", "--", "extra"},
+		"terminator then flag":   {"--", "--skip-kinds="},
+		"trailing value flag":    {"diff", "--path"},
+		"trailing short flag":    {"diff", "-o"},
+		"trailing skip-kinds":    {"diff", "--skip-kinds"},
+		"lowercase kind missing": {"--skip-kinds=secrets"},
 	}
 
-	want := "diff --skip-kinds=Secret,CustomResourceDefinition -- extra"
-	if strings.Join(got, " ") != want {
-		t.Errorf("args = %q, want %q", strings.Join(got, " "), want)
+	for name, args := range cases {
+		t.Run(name, func(t *testing.T) {
+			if got, err := EnforceSkipKinds(args); err == nil {
+				t.Errorf("want error, got args %q", got)
+			}
+		})
 	}
 }
 
-func TestEnforceSkipKinds_IgnoresSkipKindsAfterTerminator(t *testing.T) {
-	got, err := EnforceSkipKinds([]string{"--", "--skip-kinds="})
+func TestMask_ValueWithJSONEscapedCharacters_NeverSurvives(t *testing.T) {
+	const value = "FAKE-DO-NOT-USE \"q\" back\\slash\nline <tag> & ünï"
+
+	secretObject := map[string]any{
+		"apiVersion": "v1",
+		"kind":       "Secret",
+		"metadata":   map[string]any{"name": "fake"},
+		"stringData": map[string]any{"token": value},
+	}
+	lastApplied, err := json.Marshal(secretObject)
 	if err != nil {
-		t.Fatalf("EnforceSkipKinds: %v", err)
+		t.Fatalf("marshal last-applied: %v", err)
+	}
+	configMapObject := map[string]any{
+		"apiVersion": "v1",
+		"kind":       "ConfigMap",
+		"metadata": map[string]any{
+			"name":        "copy",
+			"annotations": map[string]any{"note": "see " + value, "kubectl.kubernetes.io/last-applied-configuration": string(lastApplied)},
+		},
+		"data": map[string]any{"copied": value, value: "key"},
 	}
 
-	want := "--skip-kinds=Secret,CustomResourceDefinition -- --skip-kinds="
-	if strings.Join(got, " ") != want {
-		t.Errorf("args = %q, want %q", strings.Join(got, " "), want)
+	marshal := func(object map[string]any) json.RawMessage {
+		raw, marshalErr := json.Marshal(object)
+		if marshalErr != nil {
+			t.Fatalf("marshal: %v", marshalErr)
+		}
+
+		return raw
+	}
+
+	leaky := model.Result{Changes: []model.Change{
+		{Kind: "Secret", Name: "fake", New: marshal(secretObject)},
+		{Kind: "ConfigMap", Name: "copy", New: marshal(configMapObject)},
+	}}
+
+	masker := newMasker(t, Config{})
+	masked := masker.MaskResult(leaky)
+	known := masker.KnownValues(leaky)
+
+	escapedHTML, _ := json.Marshal(value)
+	forbidden := []string{
+		value,
+		string(escapedHTML[1 : len(escapedHTML)-1]),
+		"\\\"q\\\"",
+		"ünï",
+		"\\u00fcn",
+	}
+
+	for _, sink := range outputPaths {
+		t.Run(sink.name, func(t *testing.T) {
+			output := sink.render(t, masked, known)
+			for _, needle := range forbidden {
+				if strings.Contains(output, needle) {
+					t.Errorf("escaped secret fragment %q leaked into %s output", needle, sink.name)
+				}
+			}
+		})
 	}
 }

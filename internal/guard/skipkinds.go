@@ -17,26 +17,41 @@ var requiredSkipKinds = []string{"Secret", "CustomResourceDefinition"}
 // ErrSecretNotSkipped means a configuration tried to let flate render Secrets.
 var ErrSecretNotSkipped = errors.New("--skip-kinds must include Secret")
 
+// valueFlags are the flate diff flags that consume the next argument as their
+// value. flate does not accept abbreviations of flag names, so --skip-kinds
+// has no alias to recognise.
+var valueFlags = map[string]bool{
+	"--allow-missing-kinds": true, "-a": true, "--api-versions": true,
+	"--base": true, "--cache-dir": true, "--concurrency": true,
+	"--git-depth": true, "--kube-version": true, "-n": true,
+	"--namespace": true, "-o": true, "--output": true, "-p": true,
+	"--path": true, "-P": true, "--path-orig": true,
+	"--registry-config": true, "--skip-kinds": true, "--strip-attr": true,
+	"--strip-field": true, "--supply": true, "--log-level": true,
+}
+
+// ErrAmbiguousArgs means the arguments could be parsed differently by flate
+// than by the guard, so the guard cannot prove that Secrets are skipped.
+var ErrAmbiguousArgs = errors.New("ambiguous flate arguments")
+
 // EnforceSkipKinds returns a copy of args whose --skip-kinds flag skips at
-// least Secret and CustomResourceDefinition. A missing flag is added; a
-// user-supplied list (separate value or --skip-kinds=X form, repeated or
-// empty) that lacks Secret is rejected, a list lacking only
-// CustomResourceDefinition is extended. The flag is placed before a bare
-// "--" argument terminator, and anything after it is left untouched. The input slice is not modified.
+// least Secret and CustomResourceDefinition. The forced flag is placed first
+// (right after a leading "diff" subcommand), before every other argument, so
+// no user-supplied argument can shadow it. A user-supplied --skip-kinds (separate
+// value or --skip-kinds=X form, repeated or empty) is merged into it; one that
+// lacks Secret (compared case-insensitively) is rejected, a list lacking only
+// CustomResourceDefinition is extended. A bare "--" terminator and a
+// value-taking flag without a value are rejected. The input slice is not
+// modified.
 func EnforceSkipKinds(args []string) ([]string, error) {
 	kinds := append([]string(nil), requiredSkipKinds...)
 	rest := make([]string, 0, len(args)+1)
 
-	var tail []string
-
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 
-		// Everything after a bare "--" is positional; the forced flag must
-		// come before it to be parsed as a flag.
 		if arg == "--" {
-			tail = append(tail, args[i:]...)
-			break
+			return nil, fmt.Errorf("%w: the \"--\" terminator is not allowed", ErrAmbiguousArgs)
 		}
 
 		var value string
@@ -51,6 +66,14 @@ func EnforceSkipKinds(args []string) ([]string, error) {
 			value = strings.TrimPrefix(arg, skipKindsFlag+"=")
 		default:
 			rest = append(rest, arg)
+			if valueFlags[arg] {
+				if i+1 >= len(args) {
+					return nil, fmt.Errorf("%w: %s has no value", ErrAmbiguousArgs, arg)
+				}
+				// The next argument is this flag's value, never a flag.
+				i++
+				rest = append(rest, args[i])
+			}
 			continue
 		}
 
@@ -65,9 +88,18 @@ func EnforceSkipKinds(args []string) ([]string, error) {
 		}
 	}
 
-	rest = append(rest, skipKindsFlag+"="+strings.Join(kinds, ","))
+	forced := skipKindsFlag + "=" + strings.Join(kinds, ",")
 
-	return append(rest, tail...), nil
+	insertAt := 0
+	if len(rest) > 0 && rest[0] == "diff" {
+		insertAt = 1
+	}
+
+	out := make([]string, 0, len(rest)+1)
+	out = append(out, rest[:insertAt]...)
+	out = append(out, forced)
+
+	return append(out, rest[insertAt:]...), nil
 }
 
 func splitKinds(value string) []string {
@@ -83,7 +115,7 @@ func splitKinds(value string) []string {
 
 func contains(list []string, item string) bool {
 	for _, candidate := range list {
-		if candidate == item {
+		if strings.EqualFold(candidate, item) {
 			return true
 		}
 	}
