@@ -212,7 +212,7 @@ func newAPI(cfg Config) (*api, error) {
 	if err != nil || base.Host == "" {
 		return nil, errors.New("invalid GitHub API URL")
 	}
-	if base.Scheme != "https" && !(base.Scheme == "http" && isLoopback(base.Hostname())) {
+	if base.Scheme != "https" && (base.Scheme != "http" || !isLoopback(base.Hostname())) {
 		return nil, errors.New("the GitHub API URL must use https")
 	}
 
