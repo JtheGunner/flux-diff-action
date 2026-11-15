@@ -1,0 +1,3 @@
+# Extra commands the read-only review gate may run. One whole command per line,
+# matched exactly. `golangci-lint run`, `go vet` and `go test` are built in.
+gofmt -l .
