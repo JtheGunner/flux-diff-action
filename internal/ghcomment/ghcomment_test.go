@@ -358,3 +358,28 @@ func assertSummary(t *testing.T, path, want string) {
 		t.Error("summary contains the token")
 	}
 }
+
+func TestUpsert_RejectsMarkerInTheMiddleAndCreatesNothing(t *testing.T) {
+	fake := &fakeGitHub{}
+	cfg := newConfig(t, fake)
+
+	if _, err := Upsert(context.Background(), cfg, 5, marker, "intro\n"+marker+"\nbody"); err == nil {
+		t.Fatal("want an error for a body that does not start with the marker")
+	}
+	if len(fake.comments) != 0 || len(fake.requests) != 0 {
+		t.Errorf("API was called: comments=%v requests=%v", fake.comments, fake.requests)
+	}
+}
+
+func TestUpsert_TruncationKeepsTheMarkerEvenForTinyLimits(t *testing.T) {
+	fake := &fakeGitHub{}
+	cfg := newConfig(t, fake)
+	cfg.MaxSize = 20 // smaller than marker plus notice
+
+	if _, err := Upsert(context.Background(), cfg, 5, marker, marker+"\n"+strings.Repeat("x\n", 500)); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+	if !strings.HasPrefix(fake.comments[0].Body, marker) {
+		t.Errorf("posted body lost its marker: %q", fake.comments[0].Body)
+	}
+}

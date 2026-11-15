@@ -120,11 +120,11 @@ func Upsert(ctx context.Context, cfg Config, pr int, marker, body string) (Resul
 	if marker == "" {
 		return Result{}, errors.New("marker must not be empty")
 	}
-	if !strings.Contains(body, marker) {
-		return Result{}, errors.New("body does not contain the marker, so the comment could not be found again")
+	if !strings.HasPrefix(body, marker) {
+		return Result{}, errors.New("body does not start with the marker, so the comment could not be found again")
 	}
 
-	body, truncated := limit(body, cfg.MaxSize)
+	body, truncated := limit(body, marker, cfg.MaxSize)
 
 	if cfg.Fork {
 		return summarise(cfg, body, truncated)
@@ -186,7 +186,7 @@ func summarise(cfg Config, body string, truncated bool) (Result, error) {
 
 // limit cuts body to at most maxSize characters, keeping the leading marker line
 // and ending with a notice. It cuts at a line boundary where possible.
-func limit(body string, maxSize int) (string, bool) {
+func limit(body, marker string, maxSize int) (string, bool) {
 	if maxSize <= 0 {
 		maxSize = DefaultMaxSize
 	}
@@ -202,6 +202,10 @@ func limit(body string, maxSize int) (string, bool) {
 	cut := string(runes[:room])
 	if idx := strings.LastIndex(cut, "\n"); idx > 0 {
 		cut = cut[:idx]
+	}
+	// The marker is how the comment is found again; it is never cut.
+	if !strings.HasPrefix(cut, marker) {
+		cut = marker
 	}
 
 	return cut + truncationNotice, true
