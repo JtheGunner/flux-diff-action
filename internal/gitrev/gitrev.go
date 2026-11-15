@@ -19,6 +19,9 @@ import (
 // maxBlobBytes bounds how much of a blob is read.
 const maxBlobBytes = 1 << 20
 
+// maxHashOutputBytes bounds output that is expected to be one object name.
+const maxHashOutputBytes = 256
+
 var (
 	// ErrNotFound means the revision holds no entry at the requested path.
 	ErrNotFound = errors.New("file not found in revision")
@@ -34,6 +37,25 @@ func ResolveRoot(ctx context.Context, dir string) (string, error) {
 	out, err := git(ctx, dir, "", maxBlobBytes, "rev-parse", "--show-toplevel")
 	if err != nil {
 		return "", fmt.Errorf("find the repository root: %w", err)
+	}
+
+	return strings.TrimSpace(string(out)), nil
+}
+
+// MergeBase returns the best common ancestor of two revisions of the
+// repository at root, which must be trusted. It runs with the same hardening as
+// ReadFile: no repository discovery, no inherited GIT_* repository variables,
+// bounded output.
+func MergeBase(ctx context.Context, root, first, second string) (string, error) {
+	for _, rev := range []string{first, second} {
+		if err := validateRev(rev); err != nil {
+			return "", err
+		}
+	}
+
+	out, err := git(ctx, root, root, maxHashOutputBytes, "merge-base", first, second)
+	if err != nil {
+		return "", fmt.Errorf("compute the merge base: %w", err)
 	}
 
 	return strings.TrimSpace(string(out)), nil

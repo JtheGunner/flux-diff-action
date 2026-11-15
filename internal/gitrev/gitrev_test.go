@@ -221,3 +221,65 @@ func TestReadFile_AcceptsRootSpelledThroughAnAlias(t *testing.T) {
 		t.Fatalf("aliased dir: %v", err)
 	}
 }
+
+func TestMergeBase_ComputesCommonAncestor(t *testing.T) {
+	root := newRepo(t)
+	write(t, root, "a", "a")
+	runGit(t, root, "add", ".")
+	runGit(t, root, "commit", "-q", "-m", "a")
+	fork := gitOut(t, root, "rev-parse", "HEAD")
+	write(t, root, "b", "b")
+	runGit(t, root, "add", ".")
+	runGit(t, root, "commit", "-q", "-m", "b")
+
+	got, err := MergeBase(context.Background(), root, "HEAD", fork)
+	if err != nil || got != fork {
+		t.Fatalf("MergeBase = %q, %v; want %s", got, err, fork)
+	}
+	if _, err := MergeBase(context.Background(), root, "--help", fork); err == nil {
+		t.Error("a flag-like revision was accepted")
+	}
+}
+
+func TestMergeBase_IgnoresInheritedRepositoryVariables(t *testing.T) {
+	root := newRepo(t)
+	write(t, root, "a", "a")
+	runGit(t, root, "add", ".")
+	runGit(t, root, "commit", "-q", "-m", "a")
+	head := gitOut(t, root, "rev-parse", "HEAD")
+
+	other := newRepo(t)
+	t.Setenv("GIT_DIR", filepath.Join(other, ".git"))
+
+	if got, err := MergeBase(context.Background(), root, head, head); err != nil || got != head {
+		t.Fatalf("MergeBase = %q, %v; an inherited GIT_DIR must not redirect git", got, err)
+	}
+}
+
+func TestMergeBase_DoesNotTreatABareLookAlikeAsRepository(t *testing.T) {
+	outer := newRepo(t)
+	write(t, outer, "a", "a")
+	runGit(t, outer, "add", ".")
+	runGit(t, outer, "commit", "-q", "-m", "a")
+	head := gitOut(t, outer, "rev-parse", "HEAD")
+
+	lookAlike := filepath.Join(outer, "apps")
+	plantNestedRepos(t, lookAlike)
+
+	if _, err := MergeBase(context.Background(), lookAlike, head, head); err == nil {
+		t.Fatal("git ran against a directory that merely looks like a bare repository")
+	}
+}
+
+func gitOut(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("git %v: %v", args, err)
+	}
+
+	return strings.TrimSpace(string(out))
+}

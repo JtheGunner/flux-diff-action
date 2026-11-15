@@ -138,3 +138,18 @@ func TestMergeBase_RejectsNonHashArguments(t *testing.T) {
 		t.Fatal("want an error for a non-hash argument")
 	}
 }
+
+func TestMergeBase_IgnoresInheritedGitDir(t *testing.T) {
+	dir := t.TempDir()
+	git(t, dir, "init", "-q", "-b", "main")
+	head := commitFile(t, dir, "root")
+
+	other := t.TempDir()
+	git(t, other, "init", "-q", "-b", "main")
+	t.Setenv("GIT_DIR", filepath.Join(other, ".git"))
+
+	got, err := MergeBase(context.Background(), dir, head, head)
+	if err != nil || got != head {
+		t.Fatalf("MergeBase = %q, %v; an inherited GIT_DIR must not redirect git", got, err)
+	}
+}

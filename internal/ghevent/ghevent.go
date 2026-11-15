@@ -12,9 +12,9 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"regexp"
-	"strings"
+
+	"github.com/JtheGunner/flux-diff-action/internal/gitrev"
 )
 
 // maxPayloadBytes bounds how much of the event file is read.
@@ -129,14 +129,12 @@ func MergeBase(ctx context.Context, dir, baseSHA, headSHA string) (string, error
 		return "", errors.New("merge-base needs full commit hashes")
 	}
 
-	cmd := exec.CommandContext(ctx, "git", "merge-base", baseSHA, headSHA)
-	cmd.Dir = dir
-	out, err := cmd.Output()
+	out, err := gitrev.MergeBase(ctx, dir, baseSHA, headSHA)
 	if err != nil {
 		return "", errors.New("git merge-base failed: both commits must be present (check out with fetch-depth: 0)")
 	}
 
-	sha := strings.TrimSpace(string(out))
+	sha := out
 	if !shaPattern.MatchString(sha) {
 		return "", errors.New("git merge-base returned an unexpected value")
 	}
