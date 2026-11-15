@@ -1,0 +1,46 @@
+# Release contract with action.yml ("Install flux-diff"): assets are named
+# flux-diff_<version without v>_<os>_<arch>.tar.gz, hold the flux-diff binary
+# at the archive root, and checksums.txt lists "<sha256>  <asset file name>".
+# release_contract_test.go guards these names.
+version: 2
+
+project_name: flux-diff
+
+builds:
+  - id: flux-diff
+    main: ./cmd/flux-diff
+    binary: flux-diff
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: darwin
+        goarch: amd64
+
+archives:
+  - id: flux-diff
+    formats:
+      - tar.gz
+    name_template: "flux-diff_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+changelog:
+  disable: true
+
+release:
+  prerelease: auto
