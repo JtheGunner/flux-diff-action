@@ -8,10 +8,9 @@ is a manual, maintainer-only step.
 - Releases use `vMAJOR.MINOR.PATCH`, for example `v0.1.0`.
 - Release candidates add a pre-release suffix, for example `v0.1.0-rc.1`.
   GoReleaser marks every tag that contains `-` as a GitHub pre-release.
-- The composite action only accepts `vMAJOR.MINOR.PATCH` for its `version`
-  input. A release-candidate tag therefore cannot be used through the action's
-  `version` input. To exercise a candidate end to end, tag the final version
-  on a throw-away fork, or run the candidate binary directly.
+- The composite action accepts both forms for its `version` input
+  (`v0.1.0` and `v0.1.0-rc.1`), so a release candidate can be exercised end to
+  end before the final tag is cut.
 
 ## What the release workflow produces
 

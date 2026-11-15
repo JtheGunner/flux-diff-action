@@ -243,3 +243,23 @@ func TestAction_ReportResultWarnsByDefaultAndFailsOnRequest(t *testing.T) {
 		t.Errorf("fail-on-error: want a non-zero exit: %+v", fail)
 	}
 }
+
+func TestAction_ValidateInputsAcceptsPreReleaseTagsOnly(t *testing.T) {
+	base := map[string]string{
+		"INPUT_FLATE_VERSION": "v0.7.3", "INPUT_MAX_SIZE": "65000", "INPUT_FAIL_ON_ERROR": "false",
+		"INPUT_CONFIG": ".flux-diff.yaml", "EVENT_NAME": "pull_request",
+	}
+	cases := map[string]int{
+		"v0.1.0": 0, "v0.1.0-rc.1": 0, "v1.2.3-beta": 0,
+		"latest": 1, "v1.2": 1, "v1.2.3-": 1, "v1.2.3-rc..1": 1, "v1.2.3-rc/../x": 1, "v1.2.3-rc.1;id": 1, "1.2.3": 1,
+	}
+	for version, wantExit := range cases {
+		env := map[string]string{"INPUT_VERSION": version}
+		for key, value := range base {
+			env[key] = value
+		}
+		if got := runStep(t, "Validate inputs", 0, env).exitCode; got != wantExit {
+			t.Errorf("version %q: exit %d, want %d", version, got, wantExit)
+		}
+	}
+}

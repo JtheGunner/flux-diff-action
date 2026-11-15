@@ -69,7 +69,8 @@ runs:
       run: |
         set -euo pipefail
         semver='^v[0-9]+\.[0-9]+\.[0-9]+$'
-        [[ "$INPUT_VERSION" =~ $semver ]] || { echo "::error::version must be an explicit release tag such as v1.2.3"; exit 1; }
+        release='^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+(\.[0-9A-Za-z]+)*)?$'
+        [[ "$INPUT_VERSION" =~ $release ]] || { echo "::error::version must be an explicit release tag such as v1.2.3 or v1.2.3-rc.1"; exit 1; }
         [[ "$INPUT_FLATE_VERSION" =~ $semver ]] || { echo "::error::flate-version must look like v1.2.3"; exit 1; }
         [[ "$INPUT_MAX_SIZE" =~ ^[0-9]{1,6}$ ]] || { echo "::error::max-comment-size must be a number"; exit 1; }
         [[ "$INPUT_FAIL_ON_ERROR" =~ ^(true|false)$ ]] || { echo "::error::fail-on-error must be true or false"; exit 1; }
