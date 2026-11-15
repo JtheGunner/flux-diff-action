@@ -42,6 +42,7 @@ func TestCLI_Config_GeneratedArgsReachFlate(t *testing.T) {
 	binary := fakeFlate(t, "changes.json", "", "0")
 	argsFile := recordArgs(t)
 	repo := t.TempDir()
+	writeFile(t, repo, "dummy.yaml", "FAKE-DO-NOT-USE\n")
 	writeFile(t, repo, ".flux-diff.yaml", "supply: [dummy.yaml]\napiVersions: [monitoring.coreos.com/v1]\nstripAttr: [example.com/hash]\nextraSkipKinds: [Namespace]\n")
 
 	if _, err := execute(t, "--flate-binary", binary, "--path", repo); err != nil {
@@ -107,5 +108,56 @@ func TestCLI_Config_MaskPatternsMaskConfigMapValues(t *testing.T) {
 				t.Errorf("unmatched value must stay visible in %s output", outputFormat)
 			}
 		})
+	}
+}
+
+func TestCLI_RegistryConfigFlagOverridesYAMLAndMayBeAbsolute(t *testing.T) {
+	binary := fakeFlate(t, "changes.json", "", "0")
+	argsFile := recordArgs(t)
+	repo := t.TempDir()
+	writeFile(t, repo, "in-repo.json", "{}")
+	writeFile(t, repo, ".flux-diff.yaml", "registryConfig: in-repo.json\n")
+	outside := writeFile(t, t.TempDir(), "creds.json", "FAKE-DO-NOT-USE")
+
+	if _, err := execute(t, "--flate-binary", binary, "--path", repo, "--registry-config", outside); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	got := readArgs(t, argsFile)
+	if !strings.Contains(got, "--registry-config="+outside) || strings.Contains(got, "in-repo.json") {
+		t.Errorf("flate args %q: flag must replace the YAML value", got)
+	}
+}
+
+func TestCLI_Config_EscapingPathsAreRejectedBeforeFlateRuns(t *testing.T) {
+	binary := fakeFlate(t, "changes.json", "", "0")
+	argsFile := recordArgs(t)
+	repo := t.TempDir()
+	writeFile(t, repo, ".flux-diff.yaml", "registryConfig: ../escape-marker.json\n")
+
+	_, err := execute(t, "--flate-binary", binary, "--path", repo)
+	if err == nil || !strings.Contains(err.Error(), `key "registryConfig" must not point outside`) {
+		t.Fatalf("error = %v", err)
+	}
+	if strings.Contains(err.Error(), "escape-marker") {
+		t.Errorf("error echoes the offending path: %v", err)
+	}
+	if _, statErr := os.Stat(argsFile); statErr == nil {
+		t.Error("flate must not run for a rejected configuration")
+	}
+}
+
+func TestCLI_Config_InvalidMaskPatternFailsBeforeFlateRuns(t *testing.T) {
+	binary := fakeFlate(t, "changes.json", "", "0")
+	argsFile := recordArgs(t)
+	repo := t.TempDir()
+	writeFile(t, repo, ".flux-diff.yaml", "maskPatterns: [\"[unclosed\"]\n")
+
+	_, err := execute(t, "--flate-binary", binary, "--path", repo)
+	if err == nil || !strings.Contains(err.Error(), "secret guard") {
+		t.Fatalf("error = %v, want a secret guard setup error", err)
+	}
+	if _, statErr := os.Stat(argsFile); statErr == nil {
+		t.Error("flate must not run when the mask patterns are invalid")
 	}
 }

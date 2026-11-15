@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/JtheGunner/flux-diff-action/internal/flate"
 	"github.com/JtheGunner/flux-diff-action/internal/guard"
 )
 
@@ -56,16 +57,19 @@ stripAttr: [example.com/hash]
 stripField: [spec.replicas]
 extraSkipKinds: [Namespace]
 maskPatterns: [client_secret, "*password*"]
-registryConfig: /etc/docker/config.json
+registryConfig: config.json
 kubeVersion: "1.30.0"
 allowMissingKinds: [ExternalSecret]
 `
-	cfg, err := Load(writeConfig(t, t.TempDir(), valid))
+	validRoot := t.TempDir()
+	touch(t, validRoot, "secrets/dummy.yaml")
+	touch(t, validRoot, "config.json")
+	cfg, err := Load(writeConfig(t, validRoot, valid))
 	if err != nil {
 		t.Fatalf("valid config: %v", err)
 	}
 	if cfg.KubeVersion != "1.30.0" || !reflect.DeepEqual(cfg.MaskPatterns, []string{"client_secret", "*password*"}) ||
-		!reflect.DeepEqual(cfg.AllowMissingKinds, []string{"ExternalSecret"}) || cfg.RegistryConfig != "/etc/docker/config.json" {
+		!reflect.DeepEqual(cfg.AllowMissingKinds, []string{"ExternalSecret"}) || cfg.RegistryConfig != filepath.Join(validRoot, "config.json") {
 		t.Errorf("unexpected config: %+v", cfg)
 	}
 }
@@ -98,14 +102,17 @@ func TestLoad_EmptyFile_ReturnsDefaults(t *testing.T) {
 
 func TestLoad_RelativePathsResolvedAgainstRepoRoot(t *testing.T) {
 	root := t.TempDir()
-	path := writeConfig(t, root, "supply: [secrets/a.yaml, /abs/b.yaml]\nregistryConfig: .docker/config.json\n")
+	touch(t, root, "secrets/a.yaml")
+	touch(t, root, "b.yaml")
+	touch(t, root, ".docker/config.json")
+	path := writeConfig(t, root, "supply: [secrets/a.yaml, ./sub/../b.yaml]\nregistryConfig: .docker/config.json\n")
 
 	cfg, err := Load(path)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
 
-	wantSupply := []string{filepath.Join(root, "secrets/a.yaml"), "/abs/b.yaml"}
+	wantSupply := []string{filepath.Join(root, "secrets/a.yaml"), filepath.Join(root, "b.yaml")}
 	if !reflect.DeepEqual(cfg.Supply, wantSupply) {
 		t.Errorf("Supply = %v, want %v", cfg.Supply, wantSupply)
 	}
@@ -154,5 +161,88 @@ func TestFlateArgs_NeverRemovesSecretFromSkipKinds(t *testing.T) {
 		if !strings.HasPrefix(enforced[0], "--skip-kinds=Secret,CustomResourceDefinition") {
 			t.Errorf("extra %v: enforced skip-kinds = %q", extra, enforced[0])
 		}
+	}
+}
+
+func touch(t *testing.T, root, rel string) {
+	t.Helper()
+
+	path := filepath.Join(root, rel)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(path, []byte("FAKE-DO-NOT-USE"), 0o600); err != nil {
+		t.Fatalf("write %s: %v", rel, err)
+	}
+}
+
+func symlink(t *testing.T, target, link string) {
+	t.Helper()
+
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+}
+
+func TestLoad_PathsMustStayInsideRepoRoot(t *testing.T) {
+	outside := t.TempDir()
+	touch(t, outside, "creds.json")
+	creds := filepath.Join(outside, "creds.json")
+
+	cases := map[string]struct {
+		setup   func(t *testing.T, root string)
+		yaml    string
+		wantErr string
+		secret  string
+	}{
+		"supply traversal":   {nil, "supply: [../escape-marker.yaml]\n", `key "supply" must not point outside`, "escape-marker"},
+		"supply nested dots": {nil, "supply: [a/../../escape-marker.yaml]\n", `key "supply" must not point outside`, "escape-marker"},
+		"supply absolute":    {nil, "supply: [" + creds + "]\n", `key "supply" must use paths relative`, "creds.json"},
+		"registry traversal": {nil, "registryConfig: ../escape-marker.json\n", `key "registryConfig" must not point outside`, "escape-marker"},
+		"registry absolute":  {nil, "registryConfig: /etc/escape-marker.json\n", `key "registryConfig" must use paths relative`, "escape-marker"},
+		"supply missing":     {nil, "supply: [missing-marker.yaml]\n", `key "supply" refers to a file that does not exist`, "missing-marker"},
+		"supply symlink": {func(t *testing.T, root string) {
+			symlink(t, creds, filepath.Join(root, "link-marker.yaml"))
+		}, "supply: [link-marker.yaml]\n", `key "supply" must not point outside`, "link-marker"},
+		"registry dir symlink": {func(t *testing.T, root string) {
+			symlink(t, outside, filepath.Join(root, "linkdir-marker"))
+		}, "registryConfig: linkdir-marker/creds.json\n", `key "registryConfig" must not point outside`, "linkdir-marker"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			if tc.setup != nil {
+				tc.setup(t, root)
+			}
+
+			_, err := Load(writeConfig(t, root, tc.yaml))
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("error = %v, want containing %q", err, tc.wantErr)
+			}
+			// The error may name the configuration file itself, never the entry.
+			if strings.Contains(strings.ReplaceAll(err.Error(), filepath.Join(root, FileName), ""), tc.secret) {
+				t.Errorf("error echoes the offending path: %v", err)
+			}
+		})
+	}
+}
+
+func TestLoad_SymlinkInsideRootIsAllowed(t *testing.T) {
+	root := t.TempDir()
+	touch(t, root, "real/a.yaml")
+	symlink(t, filepath.Join(root, "real"), filepath.Join(root, "alias"))
+
+	cfg, err := Load(writeConfig(t, root, "supply: [alias/a.yaml]\n"))
+	if err != nil || len(cfg.Supply) != 1 {
+		t.Fatalf("got %+v, %v", cfg, err)
+	}
+}
+
+// Guards the hand-copied flate defaults: bumping the pinned flate version must
+// be accompanied by re-checking flateDefaultStripAttr.
+func TestFlateDefaults_CheckedAgainstPinnedVersion(t *testing.T) {
+	if FlateDefaultsCheckedAgainst != flate.PinnedVersion {
+		t.Errorf("flate.PinnedVersion is %s but the strip-attr defaults were checked against %s: re-run flate diff --help, compare with flateDefaultStripAttr, then update FlateDefaultsCheckedAgainst",
+			flate.PinnedVersion, FlateDefaultsCheckedAgainst)
 	}
 }

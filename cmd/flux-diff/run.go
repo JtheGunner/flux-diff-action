@@ -35,6 +35,9 @@ type runOptions struct {
 	format      string
 	config      string
 	flateBinary string
+	// registryConfig comes from the trusted command line and may be absolute;
+	// it is only passed to flate as a path.
+	registryConfig string
 }
 
 func (o runOptions) validate() error {
@@ -58,6 +61,7 @@ func addRunFlags(cmd *cobra.Command, opts *runOptions) {
 	flags.BoolVar(&opts.strict, "strict", false, "also exit 1 when units are only partially rendered")
 	flags.StringVar(&opts.format, "format", formatMarkdown, "output format: markdown, text or json")
 	flags.StringVar(&opts.config, "config", "", "configuration file (default: .flux-diff.yaml in --path, optional; a missing --config file is an error)")
+	flags.StringVar(&opts.registryConfig, "registry-config", "", "registry credentials file passed to flate; overrides registryConfig of the configuration and may be an absolute path")
 	flags.StringVar(&opts.flateBinary, "flate-binary", "flate", "flate executable to run")
 }
 
@@ -71,16 +75,21 @@ func runDiff(ctx context.Context, opts runOptions, out io.Writer) error {
 		return err
 	}
 
+	if opts.registryConfig != "" {
+		cfg.RegistryConfig = opts.registryConfig
+	}
+
+	// Build the guard first so an invalid maskPatterns glob fails before flate runs.
+	masker, err := guard.New(guard.Config{ExtraKeyPatterns: cfg.MaskPatterns})
+	if err != nil {
+		return fmt.Errorf("set up secret guard: %w", err)
+	}
+
 	raw, err := flate.Run(ctx, flate.Options{
 		Binary: opts.flateBinary, Path: opts.path, Base: opts.base, Args: cfg.FlateArgs(),
 	})
 	if err != nil {
 		return fmt.Errorf("run flate: %w", err)
-	}
-
-	masker, err := guard.New(guard.Config{ExtraKeyPatterns: cfg.MaskPatterns})
-	if err != nil {
-		return fmt.Errorf("set up secret guard: %w", err)
 	}
 
 	// Mask before anything is formatted, written or put into an error.
