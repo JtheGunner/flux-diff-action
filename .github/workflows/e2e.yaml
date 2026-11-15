@@ -38,3 +38,4 @@ jobs:
         with:
           version: ${{ vars.E2E_FLUX_DIFF_VERSION }}
           path: testdata/e2e
+          max-comment-size: "400"
