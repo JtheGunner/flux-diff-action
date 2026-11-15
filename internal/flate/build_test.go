@@ -14,14 +14,43 @@ import (
 func TestParseBuildFailures_FailedUnit(t *testing.T) {
 	got := parseBuildFailures(string(readFixture(t, "build-stderr-broken.txt")))
 
-	want := []model.Failure{{
-		Kind:      "Kustomization",
-		Namespace: "flux-system",
-		Name:      "broken-app",
-		Reason:    "kustomize build ./apps/broken-app: accumulating resources: stat apps/broken-app/does-not-exist.yaml: file does not exist",
-	}}
+	want := []model.BrokenUnit{{Kind: "Kustomization", Namespace: "flux-system", Name: "broken-app"}}
 	if !reflect.DeepEqual(got, want) {
-		t.Errorf("failures = %+v, want %+v", got, want)
+		t.Errorf("units = %+v, want %+v", got, want)
+	}
+}
+
+func TestParseBuildFailures_UnitIdentityMatchesTheDiffParser(t *testing.T) {
+	cases := map[string]struct{ diffLine, buildLine string }{
+		"namespaced": {
+			"  ✗  current snapshot: Kustomization  flux-system/app  boom",
+			"  ✗  Kustomization  flux-system/app  boom",
+		},
+		"cluster-scoped": {
+			"  ✗  current snapshot: ClusterIssuer  issuer  boom",
+			"  ✗  ClusterIssuer  issuer  boom",
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			diff := parseStderr(tc.diffLine + "\n").failures
+			built := parseBuildFailures(tc.buildLine + "\n")
+
+			if len(diff) != 1 || len(built) != 1 {
+				t.Fatalf("parsed %d diff failures and %d build units, want 1 each", len(diff), len(built))
+			}
+			if diff[0].Kind != built[0].Kind || diff[0].Namespace != built[0].Namespace || diff[0].Name != built[0].Name {
+				t.Errorf("diff identity %+v differs from build identity %+v", diff[0], built[0])
+			}
+		})
+	}
+}
+
+func TestParseBuildFailures_KeepsNoErrorText(t *testing.T) {
+	got := parseBuildFailures("  ✗  Kustomization  flux-system/app  value FAKE-DO-NOT-USE-reason-only is invalid\n")
+
+	if strings.Contains(strings.Join([]string{got[0].Kind, got[0].Namespace, got[0].Name}, " "), "FAKE-DO-NOT-USE") {
+		t.Errorf("unit carries error text: %+v", got[0])
 	}
 }
 
@@ -40,21 +69,24 @@ func TestParseBuildFailures_SummaryLineIsNotAFailure(t *testing.T) {
 }
 
 func TestBrokenInBothSides(t *testing.T) {
-	broken := model.Failure{Kind: "Kustomization", Namespace: "flux-system", Name: "broken-app", Reason: "r"}
-	other := model.Failure{Kind: "Kustomization", Namespace: "flux-system", Name: "other", Reason: "r"}
+	broken := model.BrokenUnit{Kind: "Kustomization", Namespace: "flux-system", Name: "broken-app"}
+	other := model.Failure{Kind: "Kustomization", Namespace: "flux-system", Name: "other"}
+	sameUnit := func(snapshot string) model.Failure {
+		return model.Failure{Snapshot: snapshot, Kind: broken.Kind, Namespace: broken.Namespace, Name: broken.Name}
+	}
 
 	cases := map[string]struct {
 		diff  []model.Failure
-		build []model.Failure
-		want  []model.Failure
+		build []model.BrokenUnit
+		want  []model.BrokenUnit
 	}{
-		"silent in diff":             {nil, []model.Failure{broken}, []model.Failure{broken}},
-		"reported on current side":   {[]model.Failure{{Snapshot: "current", Kind: broken.Kind, Namespace: broken.Namespace, Name: broken.Name}}, []model.Failure{broken}, nil},
-		"reported on orig side":      {[]model.Failure{{Snapshot: "orig", Kind: broken.Kind, Namespace: broken.Namespace, Name: broken.Name}}, []model.Failure{broken}, nil},
-		"only other unit in diff":    {[]model.Failure{{Snapshot: "current", Kind: other.Kind, Namespace: other.Namespace, Name: other.Name}}, []model.Failure{broken}, []model.Failure{broken}},
-		"build has no failures":      {[]model.Failure{{Snapshot: "orig", Kind: other.Kind, Namespace: other.Namespace, Name: other.Name}}, nil, nil},
-		"same name, different kind":  {[]model.Failure{{Snapshot: "current", Kind: "HelmRelease", Namespace: broken.Namespace, Name: broken.Name}}, []model.Failure{broken}, []model.Failure{broken}},
-		"same name, other namespace": {[]model.Failure{{Snapshot: "current", Kind: broken.Kind, Namespace: "apps", Name: broken.Name}}, []model.Failure{broken}, []model.Failure{broken}},
+		"silent in diff":             {nil, []model.BrokenUnit{broken}, []model.BrokenUnit{broken}},
+		"reported on current side":   {[]model.Failure{sameUnit("current")}, []model.BrokenUnit{broken}, nil},
+		"reported on orig side":      {[]model.Failure{sameUnit("orig")}, []model.BrokenUnit{broken}, nil},
+		"only other unit in diff":    {[]model.Failure{other}, []model.BrokenUnit{broken}, []model.BrokenUnit{broken}},
+		"build has no failures":      {[]model.Failure{other}, nil, nil},
+		"same name, different kind":  {[]model.Failure{{Kind: "HelmRelease", Namespace: broken.Namespace, Name: broken.Name}}, []model.BrokenUnit{broken}, []model.BrokenUnit{broken}},
+		"same name, other namespace": {[]model.Failure{{Kind: broken.Kind, Namespace: "apps", Name: broken.Name}}, []model.BrokenUnit{broken}, []model.BrokenUnit{broken}},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -68,12 +100,12 @@ func TestBrokenInBothSides(t *testing.T) {
 func TestBuild_ReturnsFailuresAndReadsOnlyStderr(t *testing.T) {
 	binary := fakeFlate(t, "flate version "+MinVersion, "changes.json", "build-stderr-broken.txt", "1")
 
-	failures, err := Build(context.Background(), Options{Binary: binary})
+	units, err := Build(context.Background(), Options{Binary: binary})
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
-	if len(failures) != 1 || failures[0].Name != "broken-app" {
-		t.Errorf("failures = %+v", failures)
+	if len(units) != 1 || units[0].Name != "broken-app" {
+		t.Errorf("units = %+v", units)
 	}
 }
 

@@ -144,15 +144,15 @@ func runDiff(ctx context.Context, opts runOptions, out io.Writer) error {
 // findBrokenInBothSides builds the head once more: flate's diff stays silent
 // for a unit that fails identically in base and head, a build does not. The
 // head failures the diff did not report are those units.
-func findBrokenInBothSides(ctx context.Context, opts runOptions, cfg config.Config, diff model.Result) ([]model.Failure, error) {
-	failures, err := flate.Build(ctx, flate.Options{
+func findBrokenInBothSides(ctx context.Context, opts runOptions, cfg config.Config, diff model.Result) ([]model.BrokenUnit, error) {
+	built, err := flate.Build(ctx, flate.Options{
 		Binary: opts.flateBinary, Path: opts.path, Args: cfg.BuildArgs(),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("run flate build: %w", err)
 	}
 
-	return flate.BrokenInBothSides(diff.Failures, failures), nil
+	return flate.BrokenInBothSides(diff.Failures, built), nil
 }
 
 // loadConfig reads the explicit --config file (which must exist) or, without

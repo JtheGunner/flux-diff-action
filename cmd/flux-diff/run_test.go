@@ -193,8 +193,8 @@ func TestCLI_BrokenInBothSides_IsNamedWithReasonAndKeepsExitCode(t *testing.T) {
 	for _, want := range []string{
 		"Already broken in base and head",
 		"Kustomization flux-system/broken-app",
-		"file does not exist",
 		"blocks: flux-system/good-app",
+		"reason not shown",
 		"Result is incomplete",
 	} {
 		if !strings.Contains(out, want) {
@@ -224,22 +224,36 @@ func TestCLI_BrokenOnOneSideOnly_StaysANormalFailure(t *testing.T) {
 	}
 }
 
-func TestCLI_BrokenInBothSides_ReasonIsMasked(t *testing.T) {
+// The reason of a unit broken in base and head is never shown: the diff holds
+// no objects for it, so a value quoted in the reason could not be masked. The
+// value below is deliberately not among the values of the diff's changes.
+func TestCLI_BrokenInBothSides_ReasonNeverReachesAnyOutput(t *testing.T) {
+	const reasonOnlyValue = "FAKE-DO-NOT-USE-build-only-value"
+
 	binary := buildFlate(t, "", "0", "build-stderr-secret-failure.txt", "1")
-	t.Setenv("FAKE_FLATE_STDOUT", fixtureAbs(t, "secret-changes.json"))
 
 	for _, outputFormat := range []string{"markdown", "text", "json"} {
-		t.Run(outputFormat, func(t *testing.T) {
-			out, err := execute(t, "--flate-binary", binary, "--format", outputFormat, "--strict")
-			if !strings.Contains(out, "broken-app") {
-				t.Fatalf("broken unit missing from output:\n%s", out)
-			}
-			for _, text := range []string{out, fmt.Sprint(err)} {
-				if strings.Contains(text, "FAKE-DO-NOT-USE") {
-					t.Errorf("fake secret leaked into %s output or error", outputFormat)
+		for _, strict := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s strict=%t", outputFormat, strict), func(t *testing.T) {
+				args := []string{"--flate-binary", binary, "--format", outputFormat}
+				if strict {
+					args = append(args, "--strict")
 				}
-			}
-		})
+
+				out, err := execute(t, args...)
+				if !strings.Contains(out, "broken-app") {
+					t.Fatalf("broken unit missing from output:\n%s", out)
+				}
+				if strict && (err == nil || !strings.Contains(err.Error(), "broken-app")) {
+					t.Errorf("--strict error = %v, want it to name the unit", err)
+				}
+				for _, text := range []string{out, fmt.Sprint(err)} {
+					if strings.Contains(text, reasonOnlyValue) || strings.Contains(text, "rendering failed") {
+						t.Errorf("the reason leaked into %s output or error: %s", outputFormat, text)
+					}
+				}
+			})
+		}
 	}
 }
 

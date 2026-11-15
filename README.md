@@ -247,9 +247,11 @@ Honest limits:
   does not mention it. flux-diff therefore also runs `flate build` on the head
   (one extra render run, Secrets skipped) and lists every unit that fails there
   but that the diff did not report as **Already broken in base and head**, with
-  its reason and the units it blocks. This relies on one assumption: flate stays
-  silent in the diff for a failure that is identical on both sides. The notice
-  does not change the exit code; with `--strict` it does, like any other
+  the units it blocks. The reason is intentionally not shown: such a unit has no
+  objects in the diff, so a value quoted in its error text could not be masked.
+  Run `flate build` locally to read it. This relies on one assumption: flate
+  stays silent in the diff for a failure that is identical on both sides. The
+  notice does not change the exit code; with `--strict` it does, like any other
   partial result. A unit that a pull request breaks, adds or deletes is
   reported as `failed` with a reason.
 

@@ -70,8 +70,8 @@ func incompleteItems(r model.Result) []incompleteItem {
 		items = append(items, incompleteItem{category: "Failed", text: text + ": " + failure.Reason})
 	}
 
-	for _, failure := range r.BrokenInBothSides {
-		items = append(items, incompleteItem{category: categoryBrokenInBothSides, text: describeBroken(failure), expected: true})
+	for _, unit := range r.BrokenInBothSides {
+		items = append(items, incompleteItem{category: categoryBrokenInBothSides, text: describeBroken(unit), expected: true})
 	}
 
 	for _, warning := range r.Warnings {
@@ -106,15 +106,15 @@ func warningCategory(code string) string {
 	}
 }
 
-// describeBroken renders a unit that fails identically in base and head with
-// its reason and the units it blocks.
-func describeBroken(failure model.Failure) string {
-	text := describeRef(failure.Kind, failure.Namespace, failure.Name) + ": " + failure.Reason
-	if len(failure.Blocks) > 0 {
-		text += " (blocks: " + strings.Join(failure.Blocks, ", ") + ")"
+// describeBroken renders a unit that fails identically in base and head and
+// the units it blocks. The reason is never shown: it cannot be masked.
+func describeBroken(unit model.BrokenUnit) string {
+	text := describeRef(unit.Kind, unit.Namespace, unit.Name)
+	if len(unit.Blocks) > 0 {
+		text += " (blocks: " + strings.Join(unit.Blocks, ", ") + ")"
 	}
 
-	return text
+	return text + "; reason not shown, run flate build locally to see it"
 }
 
 func describeWarning(warning model.Warning) string {
