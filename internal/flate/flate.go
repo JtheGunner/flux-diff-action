@@ -9,12 +9,17 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"os"
 	"os/exec"
+	"strings"
 
+	"github.com/JtheGunner/flux-diff-action/internal/guard"
 	"github.com/JtheGunner/flux-diff-action/internal/model"
 )
 
-// Result is the complete outcome of one flate run.
+// Result is the complete outcome of one flate run. As returned by Run it is
+// unmasked: callers must pass it through guard.MaskResult before it reaches
+// any output sink (formatter, log, artifact).
 type Result = model.Result
 
 const (
@@ -52,6 +57,9 @@ type Options struct {
 // the failures. Any other non-zero exit code, or exit code 1 without usable
 // JSON, is an error.
 //
+// The returned Result is raw and unmasked. The caller must apply
+// guard.MaskResult before writing it to any output sink.
+//
 // Error messages never embed flate's stdout or stderr content.
 func Run(ctx context.Context, opts Options) (Result, error) {
 	binary := opts.Binary
@@ -63,7 +71,12 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 		return Result{}, err
 	}
 
-	stdout, stderr, exitCode, err := execute(ctx, binary, buildArgs(opts))
+	args, err := guard.EnforceSkipKinds(buildArgs(opts))
+	if err != nil {
+		return Result{}, fmt.Errorf("refusing to run flate: %w", err)
+	}
+
+	stdout, stderr, exitCode, err := execute(ctx, binary, args)
 	if err != nil {
 		return Result{}, err
 	}
@@ -128,6 +141,7 @@ func execute(ctx context.Context, binary string, args []string) (stdout, stderr 
 	outBuf.limit, errBuf.limit = maxOutputBytes, maxOutputBytes
 
 	cmd := exec.CommandContext(ctx, binary, args...)
+	cmd.Env = environmentWithoutFlateVariables(os.Environ())
 	cmd.Stdout = &outBuf
 	cmd.Stderr = &errBuf
 
@@ -170,4 +184,20 @@ func (b *limitedBuffer) Write(p []byte) (int, error) {
 	}
 
 	return b.Buffer.Write(p)
+}
+
+// environmentWithoutFlateVariables drops every FLATE_* variable. flate reads
+// its flags from such variables (for example FLATE_SKIP_KINDS), which could
+// otherwise weaken the --skip-kinds the guard forces. All other variables
+// (PATH, HOME, DOCKER_CONFIG, ...) are kept so registry credentials still work.
+func environmentWithoutFlateVariables(environ []string) []string {
+	kept := make([]string, 0, len(environ))
+	for _, entry := range environ {
+		if strings.HasPrefix(entry, "FLATE_") {
+			continue
+		}
+		kept = append(kept, entry)
+	}
+
+	return kept
 }
