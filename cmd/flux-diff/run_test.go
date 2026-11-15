@@ -102,6 +102,17 @@ func TestCLI_EndToEnd_Fixture(t *testing.T) {
 	assertGolden(t, "cli-markdown.md", out)
 }
 
+func TestCLI_EndToEnd_GroupsExpectedNotices(t *testing.T) {
+	binary := fakeFlate(t, "changes.json", "stderr-grouped-warnings.txt", "0")
+
+	out, err := execute(t, "--flate-binary", binary, "--base", "main", "--path", ".")
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	assertGolden(t, "cli-markdown-grouped-notices.md", out)
+}
+
 func TestCLI_SecretFixture_NeverLeaksInOutputOrError(t *testing.T) {
 	binary := fakeFlate(t, "secret-changes.json", "stderr-secret-failure.txt", "1")
 

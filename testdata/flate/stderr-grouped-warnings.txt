@@ -1,0 +1,10 @@
+  ⚠ warnings (6)
+    [SOPSUnreadable] orig snapshot: Secret demo/demo-credentials: SOPS-encrypted data is unreadable; supply dummy values for references; re-encryption cannot be compared
+      password, api-token
+    [SOPSUnreadable] current snapshot: Secret demo/demo-credentials: SOPS-encrypted data is unreadable; supply dummy values for references; re-encryption cannot be compared
+      password, api-token
+    [SOPSUnreadable] current snapshot: Secret demo/demo-tls: SOPS-encrypted data is unreadable; supply dummy values for references; re-encryption cannot be compared
+      tls.key
+    [ExternalSource] current snapshot: Kustomization flux-system/demo-crds: external source GitRepository.source.toolkit.fluxcd.io/flux-system/demo-upstream is outside the local tree; not rendered
+    [ExternalSource] current snapshot: Kustomization flux-system/demo-addons: external source GitRepository.source.toolkit.fluxcd.io/flux-system/demo-addons-upstream is outside the local tree; not rendered
+    [UnrelatedFailure] current snapshot: OCIRepository flux-system/demo-charts: machine credential acquisition failed

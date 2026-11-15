@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- The Markdown comment folds several `SOPSUnreadable` or `ExternalSource` notices
+  into one collapsed block per code with a counter. Failures and other warnings
+  stay individual; text and JSON output are unchanged.
+
 ## [0.1.0] - 2026-11-15
 
 First release.

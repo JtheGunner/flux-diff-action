@@ -120,6 +120,73 @@ func TestMarkdown_PartialSectionListsFailuresAndSopsWarnings(t *testing.T) {
 	}
 }
 
+func sopsWarning(name string) model.Warning {
+	return model.Warning{Code: "SOPSUnreadable", Snapshot: "current", Kind: "Secret", Namespace: "demo", Name: name, Message: "SOPS-encrypted"}
+}
+
+func TestMarkdown_SeveralExpectedNoticesShareOneCollapsedBlock(t *testing.T) {
+	r := model.Result{
+		Failures: []model.Failure{{Snapshot: "current", Kind: "HelmRelease", Namespace: "demo", Name: "app", Reason: "broken"}},
+		Warnings: []model.Warning{
+			sopsWarning("one"), sopsWarning("two"), sopsWarning("three"),
+			{Code: "ExternalSource", Kind: "Kustomization", Name: "a", Message: "outside"},
+			{Code: "ExternalSource", Kind: "Kustomization", Name: "b", Message: "outside"},
+			{Code: "Other", Kind: "OCIRepository", Name: "x", Message: "odd"},
+		},
+	}
+	body, _ := Markdown(r, MarkdownOptions{})
+
+	for _, want := range []string{
+		"<summary><b>SOPS (partial):</b> 3 notices</summary>",
+		"<summary><b>External source (not rendered):</b> 2 notices</summary>",
+		"Secret demo/one", "Secret demo/two", "Secret demo/three",
+		"- **Failed:** ` HelmRelease demo/app (current snapshot): broken `",
+		"- **Warning:** ` [Other] OCIRepository x: odd `",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing %q in:\n%s", want, body)
+		}
+	}
+	if got := strings.Count(body, "<details>"); got != 2 {
+		t.Errorf("%d <details> blocks, want 2 (one per expected code)", got)
+	}
+	if strings.Contains(body, "- **SOPS (partial):**") {
+		t.Error("grouped notices must not also appear as individual items")
+	}
+}
+
+func TestMarkdown_SingleExpectedNoticeStaysIndividual(t *testing.T) {
+	body, _ := Markdown(model.Result{Warnings: []model.Warning{sopsWarning("one")}}, MarkdownOptions{})
+
+	if strings.Contains(body, "<details>") || !strings.Contains(body, "- **SOPS (partial):**") {
+		t.Errorf("single notice must stay a list item:\n%s", body)
+	}
+}
+
+func TestMarkdown_GroupedNoticesTruncateAsOneBalancedBlock(t *testing.T) {
+	var r model.Result
+	for i := range 40 {
+		r.Warnings = append(r.Warnings, sopsWarning(fmt.Sprintf("secret-%d", i)))
+	}
+
+	for _, limit := range []int{400, 700, 1500, 3000} {
+		body, truncated := Markdown(r, MarkdownOptions{MaxChars: limit})
+
+		if got := utf8.RuneCountInString(body); got > limit {
+			t.Errorf("limit %d: body has %d chars", limit, got)
+		}
+		if opens, closes := strings.Count(body, "<details>"), strings.Count(body, "</details>"); opens != closes {
+			t.Errorf("limit %d: <details> unbalanced: %d open, %d close", limit, opens, closes)
+		}
+		if !truncated && !strings.Contains(body, "Secret demo/secret-39") {
+			t.Errorf("limit %d: untruncated body lost a notice", limit)
+		}
+		if truncated && !strings.Contains(body, "more items not shown") {
+			t.Errorf("limit %d: dropped notices are not counted:\n%s", limit, body)
+		}
+	}
+}
+
 func TestMarkdown_NoChanges_SaysNoManifestChanges(t *testing.T) {
 	body, truncated := Markdown(model.Result{}, MarkdownOptions{})
 

@@ -47,6 +47,9 @@ func (c counts) summary() string {
 type incompleteItem struct {
 	category string
 	text     string
+	// expected marks a notice that is identical on every run (SOPS, external
+	// source). The Markdown output folds several of them into one block.
+	expected bool
 }
 
 // isIncomplete reports whether the result must not be presented as clean.
@@ -62,22 +65,28 @@ func incompleteItems(r model.Result) []incompleteItem {
 		if failure.Snapshot != "" {
 			text += " (" + failure.Snapshot + " snapshot)"
 		}
-		items = append(items, incompleteItem{"Failed", text + ": " + failure.Reason})
+		items = append(items, incompleteItem{category: "Failed", text: text + ": " + failure.Reason})
 	}
 
 	for _, warning := range r.Warnings {
-		items = append(items, incompleteItem{warningCategory(warning.Code), describeWarning(warning)})
+		items = append(items, incompleteItem{category: warningCategory(warning.Code), text: describeWarning(warning), expected: isExpectedNotice(warning.Code)})
 	}
 
 	for _, line := range r.Unparsed {
-		items = append(items, incompleteItem{"Unparsed flate output", line})
+		items = append(items, incompleteItem{category: "Unparsed flate output", text: line})
 	}
 
 	if r.ExitCode != 0 && len(r.Failures) == 0 {
-		items = append(items, incompleteItem{"Failed", fmt.Sprintf("flate exited with code %d without naming a failed unit", r.ExitCode)})
+		items = append(items, incompleteItem{category: "Failed", text: fmt.Sprintf("flate exited with code %d without naming a failed unit", r.ExitCode)})
 	}
 
 	return items
+}
+
+// isExpectedNotice reports whether a warning code describes a known, stable
+// limit rather than a problem that needs attention on its own.
+func isExpectedNotice(code string) bool {
+	return code == codeSOPSUnreadable || code == codeExternalSource
 }
 
 func warningCategory(code string) string {
