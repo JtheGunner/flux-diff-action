@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/JtheGunner/flux-diff-action/internal/model"
@@ -307,5 +308,55 @@ func TestFailureSummary_BoundedAndSingleLine(t *testing.T) {
 func TestUnifiedDiff_IdenticalIsEmpty(t *testing.T) {
 	if got := unifiedDiff([]string{"a", "b"}, []string{"a", "b"}); got != "" {
 		t.Errorf("diff = %q", got)
+	}
+}
+
+func TestMarkdownAndText_ParentNameCannotInjectLines(t *testing.T) {
+	evil := &model.Ref{Kind: "HelmRelease", Namespace: "demo", Name: "x`\n</details>\n::set-output name=pwn::1\n## injected"}
+	r := model.Result{Changes: []model.Change{change(model.StatusChanged, "a", evil)}}
+
+	body, _ := Markdown(r, MarkdownOptions{})
+	if opens, closes := strings.Count(body, "<details>"), strings.Count(body, "\n</details>"); closes > opens {
+		t.Errorf("injected closing tag: %d opens, %d closes:\n%s", opens, closes, body)
+	}
+	for _, line := range strings.Split(body, "\n") {
+		if strings.HasPrefix(line, "## injected") || strings.HasPrefix(line, "::") {
+			t.Errorf("parent name started a new line %q in Markdown", line)
+		}
+	}
+
+	text := Text(r)
+	for _, line := range strings.Split(text, "\n") {
+		if strings.HasPrefix(strings.TrimLeftFunc(line, unicode.IsSpace), "::") || strings.HasPrefix(line, "## injected") {
+			t.Errorf("parent name started a new line %q in text", line)
+		}
+	}
+}
+
+func TestText_LinesThatLookLikeWorkflowCommandsAreNeutralised(t *testing.T) {
+	got := neutraliseWorkflowCommands("ok\n::error::x\n##[group]y\n  ::indented\n\t##[tab]\n :: space\n\u00a0::nbsp\n\v::vt\n\f##[ff\nx\r::cr\n\u2003::em")
+
+	for _, line := range strings.Split(got, "\n") {
+		trimmed := strings.TrimLeftFunc(line, unicode.IsSpace)
+		if strings.HasPrefix(trimmed, "::") || strings.HasPrefix(trimmed, "##[") {
+			t.Errorf("line %q still reads as a workflow command", line)
+		}
+	}
+	if !strings.HasPrefix(got, "ok\n") {
+		t.Errorf("harmless lines must stay untouched: %q", got)
+	}
+}
+
+func TestText_ManifestLineWithWorkflowCommandIsNeutralised(t *testing.T) {
+	r := model.Result{Changes: []model.Change{{
+		Kind: "ConfigMap", Name: "a", Status: model.StatusChanged,
+		Old: manifest("ConfigMap", "a", "x"),
+		New: manifest("ConfigMap", "a", "x\n::add-mask::abc"),
+	}}}
+
+	for _, line := range strings.Split(Text(r), "\n") {
+		if strings.HasPrefix(strings.TrimLeft(line, " \t+-"), "::") && !strings.HasPrefix(line, "| ") {
+			t.Errorf("manifest content reads as a workflow command: %q", line)
+		}
 	}
 }

@@ -100,3 +100,34 @@ func TestRun_ExitCode1WithOnlyUnparsableStderr_SignalsUnparsed(t *testing.T) {
 		t.Errorf("unparsed = %q, want the unrecognised line", result.Unparsed)
 	}
 }
+
+func TestParse_DetailLines_OnlyKeyNamesUnderKeyListingCodes(t *testing.T) {
+	const warning = "    [SOPSUnreadable] orig snapshot: Secret ns/app: cannot read\n"
+	const other = "    [ExternalSource] orig snapshot: HelmRelease ns/app: not fetched\n"
+
+	cases := map[string]struct {
+		stderr     string
+		wantKeys   []string
+		wantUnpars []string
+	}{
+		"key names":       {warning + "          password, api-token\n", []string{"password", "api-token"}, nil},
+		"value as key":    {warning + "          token: FAKE-DO-NOT-USE-x\n", nil, []string{"token: FAKE-DO-NOT-USE-x"}},
+		"padded base64":   {warning + "          RkFLRS1ETy1OT1QtVVNF==\n", nil, []string{"RkFLRS1ETy1OT1QtVVNF=="}},
+		"mixed line":      {warning + "          password, two words\n", nil, []string{"password, two words"}},
+		"non-key-listing": {other + "          password\n", nil, []string{"password"}},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			result, err := Parse([]byte("{}"), []byte(tc.stderr))
+			if err != nil {
+				t.Fatalf("Parse: %v", err)
+			}
+			if got := result.Warnings[0].Keys; !reflect.DeepEqual(got, tc.wantKeys) {
+				t.Errorf("keys = %q, want %q", got, tc.wantKeys)
+			}
+			if !reflect.DeepEqual(result.Unparsed, tc.wantUnpars) {
+				t.Errorf("unparsed = %q, want %q", result.Unparsed, tc.wantUnpars)
+			}
+		})
+	}
+}

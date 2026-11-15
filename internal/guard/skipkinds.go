@@ -1,6 +1,15 @@
 // Package guard keeps secret values out of every output sink: it enforces
 // flate's --skip-kinds, masks Secret objects and configurable patterns in the
 // result model, and scrubs known values from free-form strings.
+//
+// Known limits: flate runs with Secrets skipped, so no Secret value is ever in
+// the result and there is nothing to scrub from warning messages, failure
+// reasons or unparsed stderr lines except values of configured patterns and
+// ConfigMap-like objects. Those free-form texts are therefore only as safe as
+// flate's own messages, which name keys and objects but not values. Stderr
+// lines are truncated before masking, so a value split by the cut is not
+// matched. A "kind: List" that wraps Secrets is not masked structurally;
+// skipping the Secret kind in flate is what keeps those out.
 package guard
 
 import (

@@ -39,7 +39,7 @@ func Text(r model.Result) string {
 		}
 	}
 
-	return out.String()
+	return neutraliseWorkflowCommands(out.String())
 }
 
 func changeDiff(change model.Change) string {

@@ -9,6 +9,7 @@ package format
 import (
 	"fmt"
 	"strings"
+	"unicode"
 
 	"github.com/JtheGunner/flux-diff-action/internal/model"
 )
@@ -113,7 +114,7 @@ func describeRef(kind, namespace, name string) string {
 		identity = namespace + "/" + name
 	}
 
-	return strings.TrimSpace(kind + " " + identity)
+	return singleLine(kind + " " + identity)
 }
 
 func describeChange(change model.Change) string {
@@ -167,4 +168,25 @@ func groupByParent(changes []model.Change) []group {
 // Markdown blocks.
 func singleLine(text string) string {
 	return strings.Join(strings.Fields(text), " ")
+}
+
+// neutraliseWorkflowCommands keeps GitHub Actions from reading a line of the
+// rendered text as a workflow command ("::set-output ...", "##[...]") when the
+// output is printed to a job log. The runner ignores leading whitespace before
+// it looks for the marker (any Unicode space), so such lines get a visible "| " prefix instead of
+// a space. Diff context lines start with a space, so manifest content from a
+// PR can reach this check indented.
+func neutraliseWorkflowCommands(text string) string {
+	// A bare carriage return starts a new line for the runner's log parser.
+	text = strings.ReplaceAll(strings.ReplaceAll(text, "\r\n", "\n"), "\r", "\n")
+
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		trimmed := strings.TrimLeftFunc(line, unicode.IsSpace)
+		if strings.HasPrefix(trimmed, "::") || strings.HasPrefix(trimmed, "##[") {
+			lines[i] = "| " + line
+		}
+	}
+
+	return strings.Join(lines, "\n")
 }

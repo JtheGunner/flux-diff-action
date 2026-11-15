@@ -5,7 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"path"
+	"regexp"
 	"strings"
 
 	"github.com/JtheGunner/flux-diff-action/internal/model"
@@ -27,17 +27,19 @@ const (
 // Config holds the user-configurable masking rules.
 type Config struct {
 	// ExtraKeyPatterns are case-insensitive globs matched against every map
-	// key at any depth, for example "client_secret" or "*password*".
+	// key at any depth, for example "client_secret" or "*password*". "*" and
+	// "?" also match "/" and "." (see compileGlob).
 	ExtraKeyPatterns []string
 	// ExtraPaths are dot-separated paths whose segments may be globs, matched
 	// case-insensitively from the object root, for example "spec.values.auth.*".
+	// Write "\." for a literal dot inside a segment.
 	ExtraPaths []string
 }
 
 // Masker masks secret values in the result model.
 type Masker struct {
-	keyPatterns []string
-	paths       [][]string
+	keyPatterns []*regexp.Regexp
+	paths       [][]*regexp.Regexp
 }
 
 // New validates cfg and returns a Masker.
@@ -45,19 +47,21 @@ func New(cfg Config) (*Masker, error) {
 	masker := &Masker{}
 
 	for _, pattern := range cfg.ExtraKeyPatterns {
-		lowered := strings.ToLower(pattern)
-		if _, err := path.Match(lowered, ""); err != nil {
+		compiled, err := compileGlob(pattern)
+		if err != nil {
 			return nil, fmt.Errorf("invalid key pattern %q: %w", pattern, err)
 		}
-		masker.keyPatterns = append(masker.keyPatterns, lowered)
+		masker.keyPatterns = append(masker.keyPatterns, compiled)
 	}
 
 	for _, extra := range cfg.ExtraPaths {
-		segments := strings.Split(strings.ToLower(extra), ".")
-		for _, segment := range segments {
-			if _, err := path.Match(segment, ""); err != nil {
+		var segments []*regexp.Regexp
+		for _, segment := range splitPathPattern(extra) {
+			compiled, err := compileGlob(segment)
+			if err != nil {
 				return nil, fmt.Errorf("invalid path %q: %w", extra, err)
 			}
+			segments = append(segments, compiled)
 		}
 		masker.paths = append(masker.paths, segments)
 	}
@@ -80,7 +84,10 @@ func (m *Masker) MaskResult(res model.Result) model.Result {
 		out.Warnings = make([]model.Warning, len(res.Warnings))
 		for i, warning := range res.Warnings {
 			warning.Message = MaskString(warning.Message, known)
-			warning.Keys = append([]string(nil), warning.Keys...)
+			warning.Keys = make([]string, len(res.Warnings[i].Keys))
+			for k, key := range res.Warnings[i].Keys {
+				warning.Keys[k] = MaskString(key, known)
+			}
 			out.Warnings[i] = warning
 		}
 	}
@@ -332,9 +339,9 @@ func (m *Masker) isMasked(p []string, value any, secret bool) (masked, fromSecre
 		}
 	}
 
-	last := strings.ToLower(p[len(p)-1])
+	last := p[len(p)-1]
 	for _, pattern := range m.keyPatterns {
-		if ok, _ := path.Match(pattern, last); ok {
+		if pattern.MatchString(last) {
 			return true, false
 		}
 	}
@@ -348,12 +355,12 @@ func (m *Masker) isMasked(p []string, value any, secret bool) (masked, fromSecre
 	return false, false
 }
 
-func matchesPath(segments, p []string) bool {
+func matchesPath(segments []*regexp.Regexp, p []string) bool {
 	if len(segments) != len(p) {
 		return false
 	}
 	for i, segment := range segments {
-		if ok, _ := path.Match(segment, strings.ToLower(p[i])); !ok {
+		if !segment.MatchString(p[i]) {
 			return false
 		}
 	}

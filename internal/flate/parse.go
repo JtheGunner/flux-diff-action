@@ -25,7 +25,17 @@ var (
 	warningsHeaderPattern = regexp.MustCompile(`^\s*⚠\s+warnings \((\d+)\)\s*$`)
 	// Detail lines under a warning are indented deeper than the warning itself.
 	detailPattern = regexp.MustCompile(`^\s{6,}\S`)
+	// keyNamePattern is what a Secret data key looks like. Only lines made of
+	// such names are accepted as key lists, so a detail line that carries a
+	// value (spaces, quotes, base64 padding) is kept as an unparsed line, where
+	// the secret guard scrubs it, instead of being listed as a key.
+	keyNamePattern = regexp.MustCompile(`^[-._a-zA-Z0-9]+$`)
 )
+
+// keyListingCodes are the warning codes whose detail lines list key names.
+var keyListingCodes = map[string]bool{
+	"SOPSUnreadable": true,
+}
 
 // rawOutput mirrors the JSON document flate prints on stdout.
 type rawOutput struct {
@@ -131,8 +141,10 @@ func parseStderr(stderr string) stderrFindings {
 
 		if len(found.warnings) > 0 && detailPattern.MatchString(line) {
 			last := &found.warnings[len(found.warnings)-1]
-			last.Keys = append(last.Keys, splitKeys(line)...)
-			continue
+			if keys, ok := keyList(last.Code, line); ok {
+				last.Keys = append(last.Keys, keys...)
+				continue
+			}
 		}
 
 		unparsed.add(line)
@@ -194,13 +206,25 @@ func (c *unparsedCollector) lines() []string {
 	return append(result, c.notes...)
 }
 
-func splitKeys(line string) []string {
-	var keys []string
-	for _, part := range strings.Split(line, ",") {
-		if key := strings.TrimSpace(part); key != "" {
-			keys = append(keys, key)
-		}
+// keyList reads a detail line as a comma-separated list of key names. It
+// reports false unless the warning code lists keys and every entry looks like
+// a key name.
+func keyList(code, line string) ([]string, bool) {
+	if !keyListingCodes[code] {
+		return nil, false
 	}
 
-	return keys
+	var keys []string
+	for _, part := range strings.Split(line, ",") {
+		key := strings.TrimSpace(part)
+		if key == "" {
+			continue
+		}
+		if !keyNamePattern.MatchString(key) {
+			return nil, false
+		}
+		keys = append(keys, key)
+	}
+
+	return keys, len(keys) > 0
 }

@@ -191,6 +191,7 @@ func objectStub(change model.Change) string {
 // codeSpan wraps untrusted text in an inline code span that the text cannot
 // break out of.
 func codeSpan(text string) string {
+	text = singleLine(text)
 	ticks := strings.Repeat("`", longestBacktickRun(text)+1)
 
 	return ticks + " " + text + " " + ticks

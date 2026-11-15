@@ -28,21 +28,25 @@ func TestLoad_ValidatesSchemaAndRejectsUnknownKeys(t *testing.T) {
 		yaml    string
 		wantErr string
 	}{
-		"unknown key":    {"skipKinds: [Secret]\n", `unknown key "skipKinds"`},
-		"list is string": {"supply: FAKE-DO-NOT-USE.yaml\n", `key "supply" must be a list`},
-		"number item":    {"stripAttr: [1]\n", `key "stripAttr" must hold strings`},
-		"unquoted kube":  {"kubeVersion: 1.30\n", `key "kubeVersion" must hold strings`},
-		"empty entry":    {"maskPatterns: ['']\n", "empty entries"},
-		"duplicate key":  {"kubeVersion: '1'\nkubeVersion: '2'\n", `duplicate key "kubeVersion"`},
-		"top level list": {"- a\n", "top level must be a mapping"},
-		"two documents":  {"kubeVersion: '1'\n---\nkubeVersion: '2'\n", "multiple YAML documents"},
-		"broken yaml":    {"supply: [a\n", "not valid YAML"},
+		"unknown key":       {"skipKinds: [Secret]\n", "unknown configuration key"},
+		"list is string":    {"supply: FAKE-DO-NOT-USE.yaml\n", `key "supply" must be a list`},
+		"number item":       {"stripAttr: [1]\n", `key "stripAttr" must hold strings`},
+		"unquoted kube":     {"kubeVersion: 1.30\n", `key "kubeVersion" must hold strings`},
+		"empty entry":       {"maskPatterns: ['']\n", "empty entries"},
+		"duplicate key":     {"kubeVersion: '1'\nkubeVersion: '2'\n", "duplicate configuration key"},
+		"duplicate unknown": {"leakedkey: 1\nleakedkey: 2\n", "unknown configuration key"},
+		"top level list":    {"- a\n", "top level must be a mapping"},
+		"two documents":     {"kubeVersion: '1'\n---\nkubeVersion: '2'\n", "multiple YAML documents"},
+		"broken yaml":       {"supply: [a\n", "not valid YAML"},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			_, err := Load(writeConfig(t, t.TempDir(), tc.yaml))
 			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 				t.Fatalf("error = %v, want containing %q", err, tc.wantErr)
+			}
+			if strings.Contains(err.Error(), "leakedkey") || strings.Contains(err.Error(), "skipKinds") {
+				t.Errorf("error echoes a configuration key: %v", err)
 			}
 			if strings.Contains(err.Error(), "FAKE-DO-NOT-USE") {
 				t.Errorf("error echoes a configuration value: %v", err)
@@ -57,19 +61,17 @@ stripAttr: [example.com/hash]
 stripField: [spec.replicas]
 extraSkipKinds: [Namespace]
 maskPatterns: [client_secret, "*password*"]
-registryConfig: config.json
 kubeVersion: "1.30.0"
 allowMissingKinds: [ExternalSecret]
 `
 	validRoot := t.TempDir()
 	touch(t, validRoot, "secrets/dummy.yaml")
-	touch(t, validRoot, "config.json")
 	cfg, err := Load(writeConfig(t, validRoot, valid))
 	if err != nil {
 		t.Fatalf("valid config: %v", err)
 	}
 	if cfg.KubeVersion != "1.30.0" || !reflect.DeepEqual(cfg.MaskPatterns, []string{"client_secret", "*password*"}) ||
-		!reflect.DeepEqual(cfg.AllowMissingKinds, []string{"ExternalSecret"}) || cfg.RegistryConfig != filepath.Join(validRoot, "config.json") {
+		!reflect.DeepEqual(cfg.AllowMissingKinds, []string{"ExternalSecret"}) || cfg.RegistryConfig != "" {
 		t.Errorf("unexpected config: %+v", cfg)
 	}
 }
@@ -104,8 +106,7 @@ func TestLoad_RelativePathsResolvedAgainstRepoRoot(t *testing.T) {
 	root := t.TempDir()
 	touch(t, root, "secrets/a.yaml")
 	touch(t, root, "b.yaml")
-	touch(t, root, ".docker/config.json")
-	path := writeConfig(t, root, "supply: [secrets/a.yaml, ./sub/../b.yaml]\nregistryConfig: .docker/config.json\n")
+	path := writeConfig(t, root, "supply: [secrets/a.yaml, ./sub/../b.yaml]\n")
 
 	cfg, err := Load(path)
 	if err != nil {
@@ -115,9 +116,6 @@ func TestLoad_RelativePathsResolvedAgainstRepoRoot(t *testing.T) {
 	wantSupply := []string{filepath.Join(root, "secrets/a.yaml"), filepath.Join(root, "b.yaml")}
 	if !reflect.DeepEqual(cfg.Supply, wantSupply) {
 		t.Errorf("Supply = %v, want %v", cfg.Supply, wantSupply)
-	}
-	if want := filepath.Join(root, ".docker/config.json"); cfg.RegistryConfig != want {
-		t.Errorf("RegistryConfig = %q, want %q", cfg.RegistryConfig, want)
 	}
 }
 
@@ -198,15 +196,11 @@ func TestLoad_PathsMustStayInsideRepoRoot(t *testing.T) {
 		"supply traversal":   {nil, "supply: [../escape-marker.yaml]\n", `key "supply" must not point outside`, "escape-marker"},
 		"supply nested dots": {nil, "supply: [a/../../escape-marker.yaml]\n", `key "supply" must not point outside`, "escape-marker"},
 		"supply absolute":    {nil, "supply: [" + creds + "]\n", `key "supply" must use paths relative`, "creds.json"},
-		"registry traversal": {nil, "registryConfig: ../escape-marker.json\n", `key "registryConfig" must not point outside`, "escape-marker"},
-		"registry absolute":  {nil, "registryConfig: /etc/escape-marker.json\n", `key "registryConfig" must use paths relative`, "escape-marker"},
+		"registry key gone":  {nil, "registryConfig: escape-marker.json\n", "unknown configuration key", "escape-marker"},
 		"supply missing":     {nil, "supply: [missing-marker.yaml]\n", `key "supply" refers to a file that does not exist`, "missing-marker"},
 		"supply symlink": {func(t *testing.T, root string) {
 			symlink(t, creds, filepath.Join(root, "link-marker.yaml"))
 		}, "supply: [link-marker.yaml]\n", `key "supply" must not point outside`, "link-marker"},
-		"registry dir symlink": {func(t *testing.T, root string) {
-			symlink(t, outside, filepath.Join(root, "linkdir-marker"))
-		}, "registryConfig: linkdir-marker/creds.json\n", `key "registryConfig" must not point outside`, "linkdir-marker"},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -244,5 +238,23 @@ func TestFlateDefaults_CheckedAgainstPinnedVersion(t *testing.T) {
 	if FlateDefaultsCheckedAgainst != flate.PinnedVersion {
 		t.Errorf("flate.PinnedVersion is %s but the strip-attr defaults were checked against %s: re-run flate diff --help, compare with flateDefaultStripAttr, then update FlateDefaultsCheckedAgainst",
 			flate.PinnedVersion, FlateDefaultsCheckedAgainst)
+	}
+}
+
+func TestLoad_SymlinkedConfigFileIsRejected(t *testing.T) {
+	outside := t.TempDir()
+	real := filepath.Join(outside, "real.yaml")
+	if err := os.WriteFile(real, []byte("leakedkey: x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	link := filepath.Join(root, FileName)
+	symlink(t, real, link)
+
+	for name, load := range map[string]func(string) (Config, error){"Load": Load, "LoadRequired": LoadRequired} {
+		_, err := load(link)
+		if err == nil || !strings.Contains(err.Error(), "not a symlink") || strings.Contains(err.Error(), "leakedkey") {
+			t.Errorf("%s error = %v, want symlink rejection without key names", name, err)
+		}
 	}
 }

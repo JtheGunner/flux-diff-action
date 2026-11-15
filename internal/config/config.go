@@ -9,15 +9,18 @@
 //	stripField: [a.b.c, ...]       # flate --strip-field
 //	extraSkipKinds: [Kind, ...]    # flate --skip-kinds, in addition to Secret
 //	maskPatterns: [glob, ...]      # extra key patterns for the secret guard
-//	registryConfig: path           # flate --registry-config (credentials file)
 //	kubeVersion: "1.30.0"          # flate --kube-version
 //	allowMissingKinds: [Kind, ...] # flate --allow-missing-kinds
 //
-// Paths (supply, registryConfig) must be relative to the repo root, which is
-// the directory that holds the configuration file. Absolute paths, "..", and
-// symlinks that leave the root are rejected because the file is untrusted
-// input (it comes from the PR head). A registry credentials file outside the
-// repo is passed through the trusted --registry-config CLI flag instead.
+// Paths (supply) must be relative to the repo root, which is the directory
+// that holds the configuration file. Absolute paths, "..", and symlinks that
+// leave the root are rejected because the file is untrusted input. The file
+// itself must not be a symlink.
+//
+// There is deliberately no registryConfig key: a Docker-style credentials file
+// can name credential helpers (credsStore, credHelpers) that flate would run
+// from PATH, so the file is only accepted through the trusted
+// --registry-config CLI flag, which sets Config.RegistryConfig.
 package config
 
 import (
@@ -47,7 +50,7 @@ type Config struct {
 	StripField        []string
 	ExtraSkipKinds    []string
 	MaskPatterns      []string
-	RegistryConfig    string
+	RegistryConfig    string // set by the CLI only, never read from the file
 	KubeVersion       string
 	AllowMissingKinds []string
 }
@@ -67,12 +70,20 @@ func Load(path string) (Config, error) {
 // LoadRequired is like Load but returns an error wrapping ErrNotFound when the
 // file does not exist.
 func LoadRequired(path string) (Config, error) {
-	data, err := os.ReadFile(path)
+	info, err := os.Lstat(path)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return Config{}, fmt.Errorf("%w: %s", ErrNotFound, path)
 		}
 
+		return Config{}, fmt.Errorf("read configuration %s: %w", path, err)
+	}
+	if info.Mode()&fs.ModeSymlink != 0 {
+		return Config{}, fmt.Errorf("configuration %s must be a regular file, not a symlink", path)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
 		return Config{}, fmt.Errorf("read configuration %s: %w", path, err)
 	}
 
@@ -124,7 +135,7 @@ func parse(data []byte, root string) (Config, error) {
 			return Config{}, fmt.Errorf("line %d: keys must be plain strings", key.Line)
 		}
 		if seen[key.Value] {
-			return Config{}, fmt.Errorf("line %d: duplicate key %q", key.Line, key.Value)
+			return Config{}, fmt.Errorf("line %d: duplicate configuration key", key.Line)
 		}
 		seen[key.Value] = true
 
@@ -147,8 +158,7 @@ func assign(cfg *Config, root string, key, value *yaml.Node) error {
 		"allowMissingKinds": &cfg.AllowMissingKinds,
 	}
 	scalars := map[string]*string{
-		"registryConfig": &cfg.RegistryConfig,
-		"kubeVersion":    &cfg.KubeVersion,
+		"kubeVersion": &cfg.KubeVersion,
 	}
 
 	if target, ok := lists[key.Value]; ok {
@@ -172,19 +182,12 @@ func assign(cfg *Config, root string, key, value *yaml.Node) error {
 		if err != nil {
 			return err
 		}
-		if key.Value == "registryConfig" && text != "" {
-			resolved, err := confine(root, key, value, text)
-			if err != nil {
-				return err
-			}
-			text = resolved
-		}
 		*target = text
 
 		return nil
 	}
 
-	return fmt.Errorf("line %d: unknown key %q", key.Line, key.Value)
+	return fmt.Errorf("line %d: unknown configuration key", key.Line)
 }
 
 func stringList(key, value *yaml.Node) ([]string, error) {
