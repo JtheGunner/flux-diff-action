@@ -85,7 +85,7 @@ func TestCLI_Config_ExplicitPathAndMissingFile(t *testing.T) {
 	}
 
 	bad := writeFile(t, dir, "bad.yaml", "bogus: [x]\n")
-	if _, err := execute(t, "--flate-binary", binary, "--config", bad); err == nil || !strings.Contains(err.Error(), `unknown key "bogus"`) {
+	if _, err := execute(t, "--flate-binary", binary, "--config", bad); err == nil || !strings.Contains(err.Error(), "unknown configuration key") {
 		t.Errorf("bad config: error = %v", err)
 	}
 }
@@ -111,12 +111,10 @@ func TestCLI_Config_MaskPatternsMaskConfigMapValues(t *testing.T) {
 	}
 }
 
-func TestCLI_RegistryConfigFlagOverridesYAMLAndMayBeAbsolute(t *testing.T) {
+func TestCLI_RegistryConfigFlagMayBeAbsolute(t *testing.T) {
 	binary := fakeFlate(t, "changes.json", "", "0")
 	argsFile := recordArgs(t)
 	repo := t.TempDir()
-	writeFile(t, repo, "in-repo.json", "{}")
-	writeFile(t, repo, ".flux-diff.yaml", "registryConfig: in-repo.json\n")
 	outside := writeFile(t, t.TempDir(), "creds.json", "FAKE-DO-NOT-USE")
 
 	if _, err := execute(t, "--flate-binary", binary, "--path", repo, "--registry-config", outside); err != nil {
@@ -124,8 +122,8 @@ func TestCLI_RegistryConfigFlagOverridesYAMLAndMayBeAbsolute(t *testing.T) {
 	}
 
 	got := readArgs(t, argsFile)
-	if !strings.Contains(got, "--registry-config="+outside) || strings.Contains(got, "in-repo.json") {
-		t.Errorf("flate args %q: flag must replace the YAML value", got)
+	if !strings.Contains(got, "--registry-config="+outside) {
+		t.Errorf("flate args %q lack the trusted registry config", got)
 	}
 }
 
@@ -133,10 +131,10 @@ func TestCLI_Config_EscapingPathsAreRejectedBeforeFlateRuns(t *testing.T) {
 	binary := fakeFlate(t, "changes.json", "", "0")
 	argsFile := recordArgs(t)
 	repo := t.TempDir()
-	writeFile(t, repo, ".flux-diff.yaml", "registryConfig: ../escape-marker.json\n")
+	writeFile(t, repo, ".flux-diff.yaml", "supply: [../escape-marker.yaml]\n")
 
 	_, err := execute(t, "--flate-binary", binary, "--path", repo)
-	if err == nil || !strings.Contains(err.Error(), `key "registryConfig" must not point outside`) {
+	if err == nil || !strings.Contains(err.Error(), `key "supply" must not point outside`) {
 		t.Fatalf("error = %v", err)
 	}
 	if strings.Contains(err.Error(), "escape-marker") {

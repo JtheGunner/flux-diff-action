@@ -61,7 +61,7 @@ func addRunFlags(cmd *cobra.Command, opts *runOptions) {
 	flags.BoolVar(&opts.strict, "strict", false, "also exit 1 when units are only partially rendered")
 	flags.StringVar(&opts.format, "format", formatMarkdown, "output format: markdown, text or json")
 	flags.StringVar(&opts.config, "config", "", "configuration file (default: .flux-diff.yaml in --path, optional; a missing --config file is an error)")
-	flags.StringVar(&opts.registryConfig, "registry-config", "", "registry credentials file passed to flate; overrides registryConfig of the configuration and may be an absolute path")
+	flags.StringVar(&opts.registryConfig, "registry-config", "", "registry credentials file passed to flate; the only way to supply registry credentials; may be an absolute path")
 	flags.StringVar(&opts.flateBinary, "flate-binary", "flate", "flate executable to run")
 }
 
