@@ -4,6 +4,7 @@ package fluxdiffaction_test
 
 import (
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -65,6 +66,32 @@ func TestAction_UsesArePinnedToCommitSHAs(t *testing.T) {
 		}
 		if !pinned.MatchString(step.Uses) {
 			t.Errorf("step %q uses %q, want a full commit SHA", step.Name, step.Uses)
+		}
+	}
+}
+
+func TestWorkflows_UsesArePinnedToCommitSHAsWithVersionComment(t *testing.T) {
+	files, err := filepath.Glob(".github/workflows/*.y*ml")
+	if err != nil || len(files) == 0 {
+		t.Fatalf("no workflow files found: %v", err)
+	}
+	usesLine := regexp.MustCompile(`^\s*(?:-\s+)?uses:\s*(\S+)(.*)$`)
+	pinned := regexp.MustCompile(`^[\w.-]+/[\w./-]+@[0-9a-f]{40}$`)
+	versionComment := regexp.MustCompile(`^\s+#\s*v\d+\.\d+\.\d+\s*$`)
+
+	for _, file := range files {
+		data, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for number, line := range strings.Split(string(data), "\n") {
+			match := usesLine.FindStringSubmatch(line)
+			if match == nil || match[1] == "./" {
+				continue
+			}
+			if !pinned.MatchString(match[1]) || !versionComment.MatchString(match[2]) {
+				t.Errorf("%s:%d: %q must be pinned to a full commit SHA with a trailing # vX.Y.Z comment", file, number+1, strings.TrimSpace(line))
+			}
 		}
 	}
 }
