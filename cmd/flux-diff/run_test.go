@@ -25,6 +25,7 @@ if [ "$1" = "--version" ]; then
   echo "flate v0.7.3"
   exit 0
 fi
+if [ -n "$FAKE_FLATE_ARGS" ]; then printf '%s\n' "$@" > "$FAKE_FLATE_ARGS"; fi
 if [ -n "$FAKE_FLATE_STDOUT" ]; then cat "$FAKE_FLATE_STDOUT"; fi
 if [ -n "$FAKE_FLATE_STDERR" ]; then cat "$FAKE_FLATE_STDERR" >&2; fi
 exit "$FAKE_FLATE_EXIT"
@@ -161,7 +162,6 @@ func TestCLI_UnsupportedFlagValues(t *testing.T) {
 		args []string
 		want string
 	}{
-		"config":  {[]string{"--config", "x.yaml"}, "--config is not supported yet"},
 		"head":    {[]string{"--head", "feature"}, "--head other than the working tree is not supported yet"},
 		"format":  {[]string{"--format", "xml"}, "unsupported --format"},
 		"nothing": {nil, ""},

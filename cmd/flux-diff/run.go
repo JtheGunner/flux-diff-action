@@ -5,9 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 
+	"github.com/JtheGunner/flux-diff-action/internal/config"
 	"github.com/JtheGunner/flux-diff-action/internal/flate"
 	"github.com/JtheGunner/flux-diff-action/internal/format"
 	"github.com/JtheGunner/flux-diff-action/internal/guard"
@@ -33,6 +35,9 @@ type runOptions struct {
 	format      string
 	config      string
 	flateBinary string
+	// registryConfig comes from the trusted command line and may be absolute;
+	// it is only passed to flate as a path.
+	registryConfig string
 }
 
 func (o runOptions) validate() error {
@@ -40,9 +45,6 @@ func (o runOptions) validate() error {
 	case formatMarkdown, formatText, formatJSON:
 	default:
 		return fmt.Errorf("unsupported --format %q (want markdown, text or json)", o.format)
-	}
-	if o.config != "" {
-		return errors.New("--config is not supported yet")
 	}
 	if o.head != "" && o.head != headWorkingTree {
 		return errors.New("--head other than the working tree is not supported yet: check out the head revision and run with --path")
@@ -58,7 +60,8 @@ func addRunFlags(cmd *cobra.Command, opts *runOptions) {
 	flags.StringVar(&opts.path, "path", ".", "directory holding the Flux manifests")
 	flags.BoolVar(&opts.strict, "strict", false, "also exit 1 when units are only partially rendered")
 	flags.StringVar(&opts.format, "format", formatMarkdown, "output format: markdown, text or json")
-	flags.StringVar(&opts.config, "config", "", "configuration file (not supported yet)")
+	flags.StringVar(&opts.config, "config", "", "configuration file (default: .flux-diff.yaml in --path, optional; a missing --config file is an error)")
+	flags.StringVar(&opts.registryConfig, "registry-config", "", "registry credentials file passed to flate; overrides registryConfig of the configuration and may be an absolute path")
 	flags.StringVar(&opts.flateBinary, "flate-binary", "flate", "flate executable to run")
 }
 
@@ -67,14 +70,26 @@ func runDiff(ctx context.Context, opts runOptions, out io.Writer) error {
 		return err
 	}
 
-	raw, err := flate.Run(ctx, flate.Options{Binary: opts.flateBinary, Path: opts.path, Base: opts.base})
+	cfg, err := loadConfig(opts)
 	if err != nil {
-		return fmt.Errorf("run flate: %w", err)
+		return err
 	}
 
-	masker, err := guard.New(guard.Config{})
+	if opts.registryConfig != "" {
+		cfg.RegistryConfig = opts.registryConfig
+	}
+
+	// Build the guard first so an invalid maskPatterns glob fails before flate runs.
+	masker, err := guard.New(guard.Config{ExtraKeyPatterns: cfg.MaskPatterns})
 	if err != nil {
 		return fmt.Errorf("set up secret guard: %w", err)
+	}
+
+	raw, err := flate.Run(ctx, flate.Options{
+		Binary: opts.flateBinary, Path: opts.path, Base: opts.base, Args: cfg.FlateArgs(),
+	})
+	if err != nil {
+		return fmt.Errorf("run flate: %w", err)
 	}
 
 	// Mask before anything is formatted, written or put into an error.
@@ -94,6 +109,27 @@ func runDiff(ctx context.Context, opts runOptions, out io.Writer) error {
 	}
 
 	return nil
+}
+
+// loadConfig reads the explicit --config file (which must exist) or, without
+// one, the optional .flux-diff.yaml in --path. Relative paths inside the file
+// resolve against the directory of the file.
+func loadConfig(opts runOptions) (config.Config, error) {
+	if opts.config != "" {
+		cfg, err := config.LoadRequired(opts.config)
+		if err != nil {
+			return config.Config{}, fmt.Errorf("load --config: %w", err)
+		}
+
+		return cfg, nil
+	}
+
+	cfg, err := config.Load(filepath.Join(opts.path, config.FileName))
+	if err != nil {
+		return config.Config{}, fmt.Errorf("load %s: %w", config.FileName, err)
+	}
+
+	return cfg, nil
 }
 
 func render(masked model.Result, outputFormat string) (string, error) {
