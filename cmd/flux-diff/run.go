@@ -44,6 +44,9 @@ type runOptions struct {
 	// configBaseRev reads the configuration from this git revision instead of
 	// the working tree, so a PR cannot weaken its own checks.
 	configBaseRev string
+	// repoRoot is the trusted repository root for --config-base-rev; it
+	// defaults to $GITHUB_WORKSPACE, then to the repository that holds --path.
+	repoRoot string
 	// configName is the configuration file name looked up with configBaseRev.
 	configName string
 	// maxSize caps the Markdown body in characters; the format default when 0.
@@ -82,6 +85,7 @@ func addRunFlags(cmd *cobra.Command, opts *runOptions) {
 	flags.StringVar(&opts.format, "format", formatMarkdown, "output format: markdown, text or json")
 	flags.StringVar(&opts.config, "config", "", "configuration file (default: .flux-diff.yaml in --path, optional; a missing --config file is an error)")
 	flags.StringVar(&opts.configBaseRev, "config-base-rev", "", "read the configuration from this git revision (run in --path) instead of the working tree; a missing file means defaults")
+	flags.StringVar(&opts.repoRoot, "repo-root", "", "trusted repository root for --config-base-rev (default: $GITHUB_WORKSPACE, else the repository holding --path)")
 	flags.StringVar(&opts.configName, "config-name", config.FileName, "configuration file name used with --config-base-rev, relative to --path")
 	flags.IntVar(&opts.maxSize, "max-size", 0, "maximum Markdown length in characters (default 65000)")
 	flags.StringVar(&opts.output, "output", "", "write the report to this file instead of stdout")
@@ -161,7 +165,20 @@ func loadConfig(opts runOptions) (config.Config, error) {
 // controls the file in its head, so the base version is the trusted one. A
 // missing file means defaults; symlinks are rejected.
 func loadBaseConfig(opts runOptions) (config.Config, error) {
-	data, err := gitrev.ReadFile(context.Background(), opts.path, opts.configBaseRev, opts.configName)
+	ctx := context.Background()
+	root := opts.repoRoot
+	if root == "" {
+		root = os.Getenv("GITHUB_WORKSPACE")
+	}
+	if root == "" {
+		resolved, err := gitrev.ResolveRoot(ctx, opts.path)
+		if err != nil {
+			return config.Config{}, fmt.Errorf("load %s from --config-base-rev: %w", opts.configName, err)
+		}
+		root = resolved
+	}
+
+	data, err := gitrev.ReadFile(ctx, root, opts.path, opts.configBaseRev, opts.configName)
 	if errors.Is(err, gitrev.ErrNotFound) {
 		return config.Config{}, nil
 	}

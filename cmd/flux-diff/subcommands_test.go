@@ -252,3 +252,33 @@ func TestCLI_FetchFlate_RefusesVersionWithoutChecksum(t *testing.T) {
 		t.Fatalf("err = %v, want a refusal for an unchecksummed version", err)
 	}
 }
+
+func TestCLI_ConfigBaseRev_IgnoresNestedRepositoryInPath(t *testing.T) {
+	binary := fakeFlate(t, "changes.json", "", "0")
+	argsFile := recordArgs(t)
+
+	repo := t.TempDir()
+	gitIn(t, repo, "init", "-q", "-b", "main")
+	apps := filepath.Join(repo, "apps")
+	if err := os.MkdirAll(apps, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, apps, ".flux-diff.yaml", "kubeVersion: \"1.30.0\"\n")
+	gitIn(t, repo, "add", ".")
+	gitIn(t, repo, "commit", "-q", "-m", "base")
+
+	// --path itself holds a repository with a weaker configuration.
+	gitIn(t, apps, "init", "-q", "-b", "main")
+	writeFile(t, apps, ".flux-diff.yaml", "kubeVersion: \"9.9.9\"\n")
+	gitIn(t, apps, "add", ".")
+	gitIn(t, apps, "commit", "-q", "-m", "evil")
+
+	t.Setenv("GITHUB_WORKSPACE", repo)
+	if _, err := execute(t, "--flate-binary", binary, "--path", apps, "--config-base-rev", "HEAD"); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	got := readArgs(t, argsFile)
+	if !strings.Contains(got, "--kube-version=1.30.0") || strings.Contains(got, "9.9.9") {
+		t.Errorf("flate args %q do not come from the outer repository", got)
+	}
+}

@@ -40,7 +40,7 @@ func TestReadFile_ReturnsContentOfRevision(t *testing.T) {
 	runGit(t, dir, "commit", "-q", "-m", "base")
 	write(t, dir, "sub/.flux-diff.yaml", "kubeVersion: \"9.9.9\"\n")
 
-	got, err := ReadFile(context.Background(), filepath.Join(dir, "sub"), "HEAD", ".flux-diff.yaml")
+	got, err := ReadFile(context.Background(), dir, filepath.Join(dir, "sub"), "HEAD", ".flux-diff.yaml")
 	if err != nil {
 		t.Fatalf("ReadFile: %v", err)
 	}
@@ -55,7 +55,7 @@ func TestReadFile_MissingFileIsNotFound(t *testing.T) {
 	runGit(t, dir, "add", ".")
 	runGit(t, dir, "commit", "-q", "-m", "base")
 
-	_, err := ReadFile(context.Background(), dir, "HEAD", ".flux-diff.yaml")
+	_, err := ReadFile(context.Background(), dir, dir, "HEAD", ".flux-diff.yaml")
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound", err)
 	}
@@ -70,7 +70,7 @@ func TestReadFile_SymlinkIsRejected(t *testing.T) {
 	runGit(t, dir, "add", ".")
 	runGit(t, dir, "commit", "-q", "-m", "base")
 
-	_, err := ReadFile(context.Background(), dir, "HEAD", ".flux-diff.yaml")
+	_, err := ReadFile(context.Background(), dir, dir, "HEAD", ".flux-diff.yaml")
 	if !errors.Is(err, ErrNotRegularFile) {
 		t.Fatalf("err = %v, want ErrNotRegularFile", err)
 	}
@@ -81,7 +81,7 @@ func TestReadFile_RejectsUnsafeArguments(t *testing.T) {
 	for _, tc := range []struct{ rev, name string }{
 		{"--output=x", "a"}, {"", "a"}, {"HEAD", "../a"}, {"HEAD", "/etc/passwd"}, {"HEAD", "-a"}, {"HEAD", ""},
 	} {
-		if _, err := ReadFile(context.Background(), dir, tc.rev, tc.name); err == nil {
+		if _, err := ReadFile(context.Background(), dir, dir, tc.rev, tc.name); err == nil {
 			t.Errorf("ReadFile(%q, %q) succeeded, want an error", tc.rev, tc.name)
 		}
 	}
@@ -89,7 +89,7 @@ func TestReadFile_RejectsUnsafeArguments(t *testing.T) {
 
 func TestReadFile_UnknownRevisionFails(t *testing.T) {
 	dir := newRepo(t)
-	if _, err := ReadFile(context.Background(), dir, "deadbeef", ".flux-diff.yaml"); err == nil {
+	if _, err := ReadFile(context.Background(), dir, dir, "deadbeef", ".flux-diff.yaml"); err == nil {
 		t.Fatal("want an error for an unknown revision")
 	}
 }
@@ -118,11 +118,70 @@ func TestReadFile_OversizeBlobFailsPromptly(t *testing.T) {
 	defer cancel()
 
 	start := time.Now()
-	_, err := ReadFile(ctx, dir, "HEAD", ".flux-diff.yaml")
+	_, err := ReadFile(ctx, dir, dir, "HEAD", ".flux-diff.yaml")
 	if err == nil {
 		t.Fatal("want an error for a blob over the limit")
 	}
 	if elapsed := time.Since(start); elapsed > 20*time.Second {
 		t.Errorf("took %v, git was probably left blocked on a full pipe", elapsed)
+	}
+}
+
+// plantNestedRepos fills sub with a bare-repository look-alike and a nested
+// .git whose history holds a weaker configuration.
+func plantNestedRepos(t *testing.T, sub string) {
+	t.Helper()
+
+	write(t, sub, "HEAD", "ref: refs/heads/main\n")
+	for _, name := range []string{"objects", "refs"} {
+		if err := os.MkdirAll(filepath.Join(sub, name), 0o750); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	nested := filepath.Join(sub, "nested")
+	if err := os.MkdirAll(nested, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, nested, "init", "-q", "-b", "main")
+	write(t, nested, ".flux-diff.yaml", "kubeVersion: \"9.9.9\"\n")
+	runGit(t, nested, "add", ".")
+	runGit(t, nested, "commit", "-q", "-m", "evil")
+}
+
+func TestReadFile_UsesTrustedRootNotNestedRepositories(t *testing.T) {
+	outer := newRepo(t)
+	write(t, outer, "apps/.flux-diff.yaml", "kubeVersion: \"1.30.0\"\n")
+	runGit(t, outer, "add", ".")
+	runGit(t, outer, "commit", "-q", "-m", "base")
+	plantNestedRepos(t, filepath.Join(outer, "apps"))
+
+	for name, dir := range map[string]string{
+		"path with a bare look-alike": filepath.Join(outer, "apps"),
+		"path with a nested .git":     filepath.Join(outer, "apps", "nested"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			got, err := ReadFile(context.Background(), outer, filepath.Join(outer, "apps"), "HEAD", ".flux-diff.yaml")
+			if err != nil || string(got) != "kubeVersion: \"1.30.0\"\n" {
+				t.Fatalf("explicit root: %q, %v", got, err)
+			}
+
+			// Without a trusted root, discovery must fail closed or find the outer
+			// repository, never the look-alike.
+			if name == "path with a bare look-alike" {
+				root, err := ResolveRoot(context.Background(), dir)
+				resolved, _ := filepath.EvalSymlinks(outer)
+				if err == nil && root != resolved {
+					t.Errorf("root = %s, want the outer repository or an error", root)
+				}
+			}
+		})
+	}
+}
+
+func TestReadFile_RejectsDirOutsideRoot(t *testing.T) {
+	root, other := newRepo(t), t.TempDir()
+	if _, err := ReadFile(context.Background(), root, other, "HEAD", ".flux-diff.yaml"); err == nil {
+		t.Fatal("want an error for a directory outside the root")
 	}
 }

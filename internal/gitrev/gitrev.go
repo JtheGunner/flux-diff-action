@@ -9,8 +9,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"path"
+	"path/filepath"
 	"strings"
 )
 
@@ -24,19 +26,38 @@ var (
 	ErrNotRegularFile = errors.New("entry in revision is not a regular file")
 )
 
-// ReadFile returns the content of the regular file name (relative to dir, no
-// subdirectories above dir) as stored in rev. dir is the working directory of
-// git, so name resolves relative to dir inside the repository. Symlinks and
-// other non-blob entries are rejected: they could point anywhere.
-func ReadFile(ctx context.Context, dir, rev, name string) ([]byte, error) {
+// ResolveRoot returns the top-level directory of the repository that contains
+// dir. Bare repositories are refused, so a directory that merely looks like one
+// is never treated as a repository. Callers that know a trusted root (the
+// runner's workspace) should pass it to ReadFile instead.
+func ResolveRoot(ctx context.Context, dir string) (string, error) {
+	out, err := git(ctx, dir, "", maxBlobBytes, "rev-parse", "--show-toplevel")
+	if err != nil {
+		return "", fmt.Errorf("find the repository root: %w", err)
+	}
+
+	return strings.TrimSpace(string(out)), nil
+}
+
+// ReadFile returns the content of the regular file name (relative to dir) as
+// stored in rev. root is the trusted repository root and dir a directory below
+// it. git always runs in root and never discovers a repository from dir, which
+// may hold a pull request's files. Symlinks and other non-blob entries are
+// rejected: they could point anywhere.
+func ReadFile(ctx context.Context, root, dir, rev, name string) ([]byte, error) {
 	if err := validateRev(rev); err != nil {
 		return nil, err
 	}
 	if err := validateName(name); err != nil {
 		return nil, err
 	}
+	relative, err := repoRelative(root, dir, name)
+	if err != nil {
+		return nil, err
+	}
+	name = relative
 
-	listing, err := git(ctx, dir, maxBlobBytes, "ls-tree", "-z", rev, "--", name)
+	listing, err := git(ctx, root, root, maxBlobBytes, "ls-tree", "-z", rev, "--", name)
 	if err != nil {
 		return nil, fmt.Errorf("list %s in the base revision: %w", name, err)
 	}
@@ -52,7 +73,7 @@ func ReadFile(ctx context.Context, dir, rev, name string) ([]byte, error) {
 		return nil, fmt.Errorf("%w: %s", ErrNotRegularFile, name)
 	}
 
-	content, err := git(ctx, dir, maxBlobBytes, "cat-file", "blob", object)
+	content, err := git(ctx, root, root, maxBlobBytes, "cat-file", "blob", object)
 	if err != nil {
 		return nil, fmt.Errorf("read %s from the base revision: %w", name, err)
 	}
@@ -94,14 +115,19 @@ func parseTreeEntry(listing []byte) (mode, objectType, object string, err error)
 	return fields[0], fields[1], fields[2], nil
 }
 
-func git(ctx context.Context, dir string, limit int64, args ...string) ([]byte, error) {
+// git runs git in dir. ceilingRoot, when set, is the trusted repository root:
+// discovery is not allowed to climb above its parent.
+func git(ctx context.Context, dir, ceilingRoot string, limit int64, args ...string) ([]byte, error) {
 	// The derived context lets us kill git once the limit is exceeded: git would
 	// otherwise block writing into the full pipe and Wait would never return.
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "git", args...)
+	// Never let a bare-repository look-alike in the working tree become the
+	// repository.
+	cmd := exec.CommandContext(ctx, "git", append([]string{"-c", "safe.bareRepository=explicit"}, args...)...)
 	cmd.Dir = dir
+	cmd.Env = gitEnv(ceilingRoot)
 
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
@@ -133,4 +159,41 @@ func git(ctx context.Context, dir string, limit int64, args ...string) ([]byte, 
 	}
 
 	return data, nil
+}
+
+// gitEnv drops variables that would redirect git to another repository and, with
+// a trusted root, forbids discovery above it.
+func gitEnv(root string) []string {
+	var env []string
+	for _, entry := range os.Environ() {
+		name, _, _ := strings.Cut(entry, "=")
+		switch name {
+		case "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_COMMON_DIR", "GIT_CEILING_DIRECTORIES":
+			continue
+		}
+		env = append(env, entry)
+	}
+	if root != "" {
+		env = append(env, "GIT_CEILING_DIRECTORIES="+filepath.Dir(root))
+	}
+
+	return env
+}
+
+// repoRelative converts name, relative to dir, into a path relative to root.
+func repoRelative(root, dir, name string) (string, error) {
+	realRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return "", errors.New("cannot resolve the repository root")
+	}
+	realDir, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return "", errors.New("cannot resolve the manifest directory")
+	}
+	sub, err := filepath.Rel(realRoot, realDir)
+	if err != nil || sub == ".." || strings.HasPrefix(sub, ".."+string(filepath.Separator)) {
+		return "", errors.New("the manifest directory is not inside the repository root")
+	}
+
+	return path.Join(filepath.ToSlash(sub), name), nil
 }
