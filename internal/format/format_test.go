@@ -315,10 +315,10 @@ func TestMarkdownAndText_ParentNameCannotInjectLines(t *testing.T) {
 	r := model.Result{Changes: []model.Change{change(model.StatusChanged, "a", evil)}}
 
 	body, _ := Markdown(r, MarkdownOptions{})
+	if opens, closes := strings.Count(body, "<details>"), strings.Count(body, "\n</details>"); closes > opens {
+		t.Errorf("injected closing tag: %d opens, %d closes:\n%s", opens, closes, body)
+	}
 	for _, line := range strings.Split(body, "\n") {
-		if line == "</details>" && !strings.Contains(body, "<details>") {
-			t.Errorf("injected closing tag on its own line:\n%s", body)
-		}
 		if strings.HasPrefix(line, "## injected") || strings.HasPrefix(line, "::") {
 			t.Errorf("parent name started a new line %q in Markdown", line)
 		}
@@ -333,11 +333,29 @@ func TestMarkdownAndText_ParentNameCannotInjectLines(t *testing.T) {
 }
 
 func TestText_LinesThatLookLikeWorkflowCommandsAreNeutralised(t *testing.T) {
-	got := neutraliseWorkflowCommands("ok\n::error::x\n##[group]y\n  ::fine")
+	got := neutraliseWorkflowCommands("ok\n::error::x\n##[group]y\n  ::indented\n\t##[tab]\n :: space")
 
 	for _, line := range strings.Split(got, "\n") {
-		if strings.HasPrefix(line, "::") || strings.HasPrefix(line, "##[") {
+		trimmed := strings.TrimLeft(line, " \t")
+		if strings.HasPrefix(trimmed, "::") || strings.HasPrefix(trimmed, "##[") {
 			t.Errorf("line %q still reads as a workflow command", line)
+		}
+	}
+	if !strings.HasPrefix(got, "ok\n") {
+		t.Errorf("harmless lines must stay untouched: %q", got)
+	}
+}
+
+func TestText_ManifestLineWithWorkflowCommandIsNeutralised(t *testing.T) {
+	r := model.Result{Changes: []model.Change{{
+		Kind: "ConfigMap", Name: "a", Status: model.StatusChanged,
+		Old: manifest("ConfigMap", "a", "x"),
+		New: manifest("ConfigMap", "a", "x\n::add-mask::abc"),
+	}}}
+
+	for _, line := range strings.Split(Text(r), "\n") {
+		if strings.HasPrefix(strings.TrimLeft(line, " \t+-"), "::") && !strings.HasPrefix(line, "| ") {
+			t.Errorf("manifest content reads as a workflow command: %q", line)
 		}
 	}
 }

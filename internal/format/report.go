@@ -171,14 +171,16 @@ func singleLine(text string) string {
 
 // neutraliseWorkflowCommands keeps GitHub Actions from reading a line of the
 // rendered text as a workflow command ("::set-output ...", "##[...]") when the
-// output is printed to a job log. Lines are prefixed with a space; every line
-// the text format produces already starts with its own marker, so this is a
-// last line of defence for untrusted names and messages.
+// output is printed to a job log. The runner ignores leading whitespace before
+// it looks for the marker, so such lines get a visible "| " prefix instead of
+// a space. Diff context lines start with a space, so manifest content from a
+// PR can reach this check indented.
 func neutraliseWorkflowCommands(text string) string {
 	lines := strings.Split(text, "\n")
 	for i, line := range lines {
-		if strings.HasPrefix(line, "::") || strings.HasPrefix(line, "##[") {
-			lines[i] = " " + line
+		trimmed := strings.TrimLeft(line, " \t")
+		if strings.HasPrefix(trimmed, "::") || strings.HasPrefix(trimmed, "##[") {
+			lines[i] = "| " + line
 		}
 	}
 
