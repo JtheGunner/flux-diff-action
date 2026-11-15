@@ -1,0 +1,187 @@
+name: flux-diff
+description: Post a secret-safe diff of Flux manifests as one self-updating pull request comment.
+author: JtheGunner
+
+# Unsupported: pull_request_target. That trigger runs with a write token in the
+# context of the base repository and must never execute code from a PR head.
+# Use the pull_request trigger. Fork PRs get the diff in the step summary.
+#
+# Security rules for this file:
+#   * No ${{ }} expression inside a `run:` script. Inputs and event data reach
+#     the scripts only through `env:` and are quoted there.
+#   * GITHUB_TOKEN is set in the environment of the comment step only.
+#   * Every third-party action is pinned to a full commit SHA.
+
+inputs:
+  version:
+    description: >-
+      flux-diff release tag to run, for example v1.2.3. Required: "latest" and
+      floating tags are not accepted.
+    required: true
+  flate-version:
+    description: flate release to download. Only versions with a checksum built into flux-diff are accepted.
+    required: false
+    default: v0.7.3
+  path:
+    description: Directory of the Flux manifests, relative to the workspace.
+    required: false
+    default: "."
+  config:
+    description: >-
+      Name of the configuration file inside path. It is read from the base
+      revision, never from the pull request head.
+    required: false
+    default: .flux-diff.yaml
+  base:
+    description: Git revision to compare against. Defaults to the merge base of the pull request.
+    required: false
+    default: ""
+  registry-config:
+    description: Path to a registry credentials file passed to flate.
+    required: false
+    default: ""
+  max-comment-size:
+    description: Maximum comment length in characters. Longer diffs are truncated and uploaded as an artifact.
+    required: false
+    default: "65000"
+  fail-on-error:
+    description: Fail the step when flux-diff reports failed units. By default a warning is shown and the step succeeds.
+    required: false
+    default: "false"
+
+outputs:
+  outcome:
+    description: created, updated or step-summary.
+    value: ${{ steps.comment.outputs.outcome }}
+
+runs:
+  using: composite
+  steps:
+    - name: Validate inputs
+      shell: bash
+      env:
+        INPUT_VERSION: ${{ inputs.version }}
+        INPUT_FLATE_VERSION: ${{ inputs.flate-version }}
+        INPUT_MAX_SIZE: ${{ inputs.max-comment-size }}
+        INPUT_FAIL_ON_ERROR: ${{ inputs.fail-on-error }}
+        INPUT_CONFIG: ${{ inputs.config }}
+        EVENT_NAME: ${{ github.event_name }}
+      run: |
+        set -euo pipefail
+        semver='^v[0-9]+\.[0-9]+\.[0-9]+$'
+        [[ "$INPUT_VERSION" =~ $semver ]] || { echo "::error::version must be an explicit release tag such as v1.2.3"; exit 1; }
+        [[ "$INPUT_FLATE_VERSION" =~ $semver ]] || { echo "::error::flate-version must look like v1.2.3"; exit 1; }
+        [[ "$INPUT_MAX_SIZE" =~ ^[0-9]{1,6}$ ]] || { echo "::error::max-comment-size must be a number"; exit 1; }
+        [[ "$INPUT_FAIL_ON_ERROR" =~ ^(true|false)$ ]] || { echo "::error::fail-on-error must be true or false"; exit 1; }
+        [[ "$INPUT_CONFIG" =~ ^[A-Za-z0-9._][A-Za-z0-9._/-]*$ && "$INPUT_CONFIG" != *..* ]] || { echo "::error::config must be a relative file name"; exit 1; }
+        [[ "$EVENT_NAME" == "pull_request" ]] || { echo "::error::flux-diff only supports the pull_request event"; exit 1; }
+
+    - name: Install flux-diff
+      shell: bash
+      env:
+        ACTION_REPOSITORY: ${{ github.action_repository || github.repository }}
+        INPUT_VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        case "$RUNNER_OS" in Linux) os=linux ;; macOS) os=darwin ;; *) echo "::error::unsupported runner OS"; exit 1 ;; esac
+        case "$RUNNER_ARCH" in X64) arch=amd64 ;; ARM64) arch=arm64 ;; *) echo "::error::unsupported runner architecture"; exit 1 ;; esac
+        # Release contract: flux-diff_<version without v>_<os>_<arch>.tar.gz and checksums.txt.
+        asset="flux-diff_${INPUT_VERSION#v}_${os}_${arch}.tar.gz"
+        base="https://github.com/${ACTION_REPOSITORY}/releases/download/${INPUT_VERSION}"
+        dir="${RUNNER_TEMP}/flux-diff-action"
+        rm -rf "$dir" && mkdir -p "$dir/bin"
+        curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location --output "$dir/$asset" "$base/$asset"
+        curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location --output "$dir/checksums.txt" "$base/checksums.txt"
+        # Fail closed: nothing is extracted or run unless the digest matches.
+        expected="$(awk -v asset="$asset" '$2 == asset { print; exit }' "$dir/checksums.txt")"
+        [ -n "$expected" ] || { echo "::error::no checksum for $asset"; exit 1; }
+        if command -v sha256sum >/dev/null 2>&1; then
+          (cd "$dir" && printf '%s\n' "$expected" | sha256sum -c -)
+        else
+          (cd "$dir" && printf '%s\n' "$expected" | shasum -a 256 -c -)
+        fi
+        tar -xzf "$dir/$asset" -C "$dir/bin" flux-diff
+        chmod 0755 "$dir/bin/flux-diff"
+
+    - name: Install flate
+      shell: bash
+      env:
+        INPUT_FLATE_VERSION: ${{ inputs.flate-version }}
+      run: |
+        set -euo pipefail
+        dir="${RUNNER_TEMP}/flux-diff-action"
+        "$dir/bin/flux-diff" fetch-flate --version "$INPUT_FLATE_VERSION" --dest "$dir/flate"
+
+    - name: Resolve pull request revisions
+      id: event
+      shell: bash
+      env:
+        WORKSPACE: ${{ github.workspace }}
+      run: |
+        set -euo pipefail
+        "${RUNNER_TEMP}/flux-diff-action/bin/flux-diff" event --repo "$WORKSPACE" >> "$GITHUB_OUTPUT"
+
+    - name: Render diff
+      id: diff
+      shell: bash
+      env:
+        MANIFEST_PATH: ${{ inputs.path }}
+        CONFIG_NAME: ${{ inputs.config }}
+        BASE_OVERRIDE: ${{ inputs.base }}
+        MERGE_BASE: ${{ steps.event.outputs.base }}
+        REGISTRY_CONFIG: ${{ inputs.registry-config }}
+        MAX_SIZE: ${{ inputs.max-comment-size }}
+      run: |
+        set -uo pipefail
+        dir="${RUNNER_TEMP}/flux-diff-action"
+        base="${BASE_OVERRIDE:-$MERGE_BASE}"
+        args=(--path "$MANIFEST_PATH" --base "$base" --config-base-rev "$base" --config-name "$CONFIG_NAME"
+          --flate-binary "$dir/flate/flate" --format markdown --max-size "$MAX_SIZE"
+          --output "$dir/comment.md" --full-output "$dir/full-diff.md")
+        [ -z "$REGISTRY_CONFIG" ] || args+=(--registry-config "$REGISTRY_CONFIG")
+        # The report goes to a file, never to the job log: the runner treats log
+        # lines that start with :: as workflow commands.
+        "$dir/bin/flux-diff" "${args[@]}"
+        code=$?
+        echo "exit-code=$code" >> "$GITHUB_OUTPUT"
+        [ ! -s "$dir/comment.md" ] || echo "has-comment=true" >> "$GITHUB_OUTPUT"
+        [ ! -s "$dir/full-diff.md" ] || echo "truncated=true" >> "$GITHUB_OUTPUT"
+        exit 0
+
+    - name: Post comment
+      id: comment
+      if: ${{ !cancelled() && steps.diff.outputs.has-comment == 'true' }}
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+        PR_NUMBER: ${{ steps.event.outputs.pr }}
+        IS_FORK: ${{ steps.event.outputs.fork }}
+        MAX_SIZE: ${{ inputs.max-comment-size }}
+      run: |
+        set -euo pipefail
+        dir="${RUNNER_TEMP}/flux-diff-action"
+        args=(--pr "$PR_NUMBER" --body-file "$dir/comment.md" --max-size "$MAX_SIZE" --step-summary "$GITHUB_STEP_SUMMARY")
+        [ "$IS_FORK" != "true" ] || args+=(--fork)
+        "$dir/bin/flux-diff" comment "${args[@]}" >> "$GITHUB_OUTPUT"
+
+    - name: Upload full diff
+      if: ${{ !cancelled() && steps.diff.outputs.truncated == 'true' }}
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      with:
+        name: flux-diff-full
+        path: ${{ runner.temp }}/flux-diff-action/full-diff.md
+        if-no-files-found: error
+
+    - name: Report result
+      if: ${{ !cancelled() && steps.diff.outputs.exit-code != '0' }}
+      shell: bash
+      env:
+        EXIT_CODE: ${{ steps.diff.outputs.exit-code }}
+        FAIL_ON_ERROR: ${{ inputs.fail-on-error }}
+      run: |
+        set -euo pipefail
+        if [ "$FAIL_ON_ERROR" = "true" ]; then
+          echo "::error::flux-diff reported failed units (exit code $EXIT_CODE)"
+          exit 1
+        fi
+        echo "::warning::flux-diff reported failed units (exit code $EXIT_CODE); see the pull request comment"
