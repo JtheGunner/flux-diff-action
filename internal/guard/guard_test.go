@@ -482,3 +482,30 @@ func TestMask_ValueWithJSONEscapedCharacters_NeverSurvives(t *testing.T) {
 		})
 	}
 }
+
+func TestMask_GlobsMatchKeysWithSlashAndDot(t *testing.T) {
+	masker := newMasker(t, Config{
+		ExtraKeyPatterns: []string{"*secret*", "EXAMPLE.com/token"},
+		ExtraPaths:       []string{`metadata.annotations.app\.example\.io/key`},
+	})
+	change := model.Change{
+		Kind: "ConfigMap", Status: model.StatusChanged,
+		Old: json.RawMessage(`{"kind":"ConfigMap","metadata":{"annotations":{"app.example.io/key":"FAKE-DO-NOT-USE-0"}},"data":{"example.com/client-secret":"FAKE-DO-NOT-USE-1","example.com/token":"FAKE-DO-NOT-USE-2","plain":"visible"}}`),
+		New: json.RawMessage(`{"kind":"ConfigMap","metadata":{"annotations":{"app.example.io/key":"FAKE-DO-NOT-USE-3"}},"data":{"example.com/client-secret":"FAKE-DO-NOT-USE-4","example.com/token":"FAKE-DO-NOT-USE-5","plain":"visible"}}`),
+	}
+
+	got := masker.MaskResult(model.Result{Changes: []model.Change{change}})
+
+	out := string(got.Changes[0].Old) + string(got.Changes[0].New)
+	if strings.Contains(out, "FAKE-DO-NOT-USE") {
+		t.Errorf("a key containing / or . escaped its pattern: %s", out)
+	}
+}
+
+func TestNew_GlobSyntaxErrors(t *testing.T) {
+	for _, pattern := range []string{"[unclosed", "[]", `trailing\`} {
+		if _, err := New(Config{ExtraKeyPatterns: []string{pattern}}); err == nil {
+			t.Errorf("pattern %q must be rejected", pattern)
+		}
+	}
+}
