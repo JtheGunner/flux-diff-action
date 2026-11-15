@@ -309,3 +309,35 @@ func TestUnifiedDiff_IdenticalIsEmpty(t *testing.T) {
 		t.Errorf("diff = %q", got)
 	}
 }
+
+func TestMarkdownAndText_ParentNameCannotInjectLines(t *testing.T) {
+	evil := &model.Ref{Kind: "HelmRelease", Namespace: "demo", Name: "x`\n</details>\n::set-output name=pwn::1\n## injected"}
+	r := model.Result{Changes: []model.Change{change(model.StatusChanged, "a", evil)}}
+
+	body, _ := Markdown(r, MarkdownOptions{})
+	for _, line := range strings.Split(body, "\n") {
+		if line == "</details>" && !strings.Contains(body, "<details>") {
+			t.Errorf("injected closing tag on its own line:\n%s", body)
+		}
+		if strings.HasPrefix(line, "## injected") || strings.HasPrefix(line, "::") {
+			t.Errorf("parent name started a new line %q in Markdown", line)
+		}
+	}
+
+	text := Text(r)
+	for _, line := range strings.Split(text, "\n") {
+		if strings.HasPrefix(line, "::") || strings.HasPrefix(line, "## injected") {
+			t.Errorf("parent name started a new line %q in text", line)
+		}
+	}
+}
+
+func TestText_LinesThatLookLikeWorkflowCommandsAreNeutralised(t *testing.T) {
+	got := neutraliseWorkflowCommands("ok\n::error::x\n##[group]y\n  ::fine")
+
+	for _, line := range strings.Split(got, "\n") {
+		if strings.HasPrefix(line, "::") || strings.HasPrefix(line, "##[") {
+			t.Errorf("line %q still reads as a workflow command", line)
+		}
+	}
+}

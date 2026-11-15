@@ -113,7 +113,7 @@ func describeRef(kind, namespace, name string) string {
 		identity = namespace + "/" + name
 	}
 
-	return strings.TrimSpace(kind + " " + identity)
+	return singleLine(kind + " " + identity)
 }
 
 func describeChange(change model.Change) string {
@@ -167,4 +167,20 @@ func groupByParent(changes []model.Change) []group {
 // Markdown blocks.
 func singleLine(text string) string {
 	return strings.Join(strings.Fields(text), " ")
+}
+
+// neutraliseWorkflowCommands keeps GitHub Actions from reading a line of the
+// rendered text as a workflow command ("::set-output ...", "##[...]") when the
+// output is printed to a job log. Lines are prefixed with a space; every line
+// the text format produces already starts with its own marker, so this is a
+// last line of defence for untrusted names and messages.
+func neutraliseWorkflowCommands(text string) string {
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		if strings.HasPrefix(line, "::") || strings.HasPrefix(line, "##[") {
+			lines[i] = " " + line
+		}
+	}
+
+	return strings.Join(lines, "\n")
 }
