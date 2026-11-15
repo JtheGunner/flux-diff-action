@@ -1,0 +1,4 @@
+  ✗  orig snapshot: HelmRelease  demo/demo-app  valuesFrom Secret demo/demo-credentials not found
+  ✗  current snapshot: HelmRelease  demo/demo-app  valuesFrom Secret demo/demo-credentials not found
+
+  ✗ 2 failed · 0 blocked

@@ -1,0 +1,173 @@
+// Package flate runs the flate CLI as a separate process and turns its output
+// into a typed model. flate is AGPL-3.0 licensed and must never be imported as
+// a library.
+package flate
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"fmt"
+	"io/fs"
+	"os/exec"
+
+	"github.com/JtheGunner/flux-diff-action/internal/model"
+)
+
+// Result is the complete outcome of one flate run.
+type Result = model.Result
+
+const (
+	defaultBinary = "flate"
+	// maxOutputBytes bounds how much of each stream is kept in memory.
+	maxOutputBytes = 256 << 20
+)
+
+var (
+	// ErrBinaryNotFound means the flate executable does not exist or is not
+	// runnable.
+	ErrBinaryNotFound = errors.New("flate binary not found")
+	// ErrVersionTooOld means the installed flate is older than MinVersion.
+	ErrVersionTooOld = errors.New("flate version is below the supported minimum")
+	// ErrOutputTooLarge means flate printed more than the supported amount.
+	ErrOutputTooLarge = errors.New("flate output exceeds the size limit")
+)
+
+// Options configures one flate run.
+type Options struct {
+	// Binary is the flate executable; "flate" (looked up on PATH) when empty.
+	Binary string
+	// Path is the directory holding the Flux manifests (flate --path).
+	Path string
+	// Base is the Git revision to compare with (flate --base).
+	Base string
+	// Args are extra flate flags appended after the generated ones.
+	Args []string
+}
+
+// Run executes `flate diff -o json` and returns the parsed result.
+//
+// Exit code 1 means flate hit errors but usually still produced a partial
+// result; it is returned with ExitCode 1 and no error so the caller can show
+// the failures. Any other non-zero exit code, or exit code 1 without usable
+// JSON, is an error.
+//
+// Error messages never embed flate's stdout or stderr content.
+func Run(ctx context.Context, opts Options) (Result, error) {
+	binary := opts.Binary
+	if binary == "" {
+		binary = defaultBinary
+	}
+
+	if err := checkVersion(ctx, binary); err != nil {
+		return Result{}, err
+	}
+
+	stdout, stderr, exitCode, err := execute(ctx, binary, buildArgs(opts))
+	if err != nil {
+		return Result{}, err
+	}
+
+	if exitCode != 0 && exitCode != 1 {
+		return Result{}, fmt.Errorf("flate exited with unexpected code %d", exitCode)
+	}
+
+	result, err := Parse(stdout, stderr)
+	if err != nil {
+		return Result{}, fmt.Errorf("flate exited with code %d: %w", exitCode, err)
+	}
+
+	result.ExitCode = exitCode
+
+	return result, nil
+}
+
+func buildArgs(opts Options) []string {
+	args := []string{"diff", "-o", "json", "--no-progress"}
+	if opts.Path != "" {
+		args = append(args, "-p", opts.Path)
+	}
+	if opts.Base != "" {
+		args = append(args, "--base", opts.Base)
+	}
+
+	return append(args, opts.Args...)
+}
+
+func checkVersion(ctx context.Context, binary string) error {
+	stdout, _, exitCode, err := execute(ctx, binary, []string{"--version"})
+	if err != nil {
+		return err
+	}
+	if exitCode != 0 {
+		return fmt.Errorf("flate --version exited with code %d", exitCode)
+	}
+
+	found, err := parseVersion(string(stdout))
+	if err != nil {
+		return errors.New("could not determine the flate version from `flate --version`")
+	}
+
+	foundText := fmt.Sprintf("v%d.%d.%d", found[0], found[1], found[2])
+
+	order, err := compareVersions(foundText, MinVersion)
+	if err != nil {
+		return err
+	}
+	if order < 0 {
+		return fmt.Errorf("%w: found %s, need at least %s", ErrVersionTooOld, foundText, MinVersion)
+	}
+
+	return nil
+}
+
+// execute runs the binary and returns its streams and exit code. A non-zero
+// exit code is not an error; failing to start or finish the process is.
+func execute(ctx context.Context, binary string, args []string) (stdout, stderr []byte, exitCode int, err error) {
+	var outBuf, errBuf limitedBuffer
+	outBuf.limit, errBuf.limit = maxOutputBytes, maxOutputBytes
+
+	cmd := exec.CommandContext(ctx, binary, args...)
+	cmd.Stdout = &outBuf
+	cmd.Stderr = &errBuf
+
+	runErr := cmd.Run()
+
+	if ctx.Err() != nil {
+		return nil, nil, 0, fmt.Errorf("flate run aborted: %w", ctx.Err())
+	}
+	if outBuf.exceeded || errBuf.exceeded {
+		return nil, nil, 0, ErrOutputTooLarge
+	}
+
+	if runErr == nil {
+		return outBuf.Bytes(), errBuf.Bytes(), 0, nil
+	}
+
+	var exitErr *exec.ExitError
+	if errors.As(runErr, &exitErr) {
+		return outBuf.Bytes(), errBuf.Bytes(), exitErr.ExitCode(), nil
+	}
+
+	if errors.Is(runErr, exec.ErrNotFound) || errors.Is(runErr, fs.ErrNotExist) || errors.Is(runErr, fs.ErrPermission) {
+		return nil, nil, 0, fmt.Errorf("%w: %q (install flate %s or set the binary path)", ErrBinaryNotFound, binary, PinnedVersion)
+	}
+
+	return nil, nil, 0, fmt.Errorf("start flate %q: %w", binary, runErr)
+}
+
+// limitedBuffer keeps at most limit bytes and records when more arrived.
+type limitedBuffer struct {
+	bytes.Buffer
+	limit    int
+	exceeded bool
+}
+
+func (b *limitedBuffer) Write(p []byte) (int, error) {
+	if b.Len()+len(p) > b.limit {
+		b.exceeded = true
+		return len(p), nil
+	}
+
+	return b.Buffer.Write(p)
+}
