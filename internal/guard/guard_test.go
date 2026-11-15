@@ -509,3 +509,22 @@ func TestNew_GlobSyntaxErrors(t *testing.T) {
 		}
 	}
 }
+
+func TestMaskResult_ScrubsWarningKeys(t *testing.T) {
+	masker := newMasker(t, Config{})
+	res := model.Result{
+		Changes:  []model.Change{secretChange(t)},
+		Warnings: []model.Warning{{Code: "SOPSUnreadable", Keys: []string{"FAKE-DO-NOT-USE-1"}}},
+	}
+	known := masker.KnownValues(res)
+	if len(known) == 0 {
+		t.Fatal("fixture yields no known secret values")
+	}
+	res.Warnings[0].Keys = []string{known[0]}
+
+	got := masker.MaskResult(res)
+
+	if strings.Contains(strings.Join(got.Warnings[0].Keys, ","), known[0]) {
+		t.Errorf("a known secret value survived as a warning key: %v", got.Warnings[0].Keys)
+	}
+}

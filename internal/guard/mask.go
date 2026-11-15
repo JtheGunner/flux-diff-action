@@ -84,7 +84,10 @@ func (m *Masker) MaskResult(res model.Result) model.Result {
 		out.Warnings = make([]model.Warning, len(res.Warnings))
 		for i, warning := range res.Warnings {
 			warning.Message = MaskString(warning.Message, known)
-			warning.Keys = append([]string(nil), warning.Keys...)
+			warning.Keys = make([]string, len(res.Warnings[i].Keys))
+			for k, key := range res.Warnings[i].Keys {
+				warning.Keys[k] = MaskString(key, known)
+			}
 			out.Warnings[i] = warning
 		}
 	}
