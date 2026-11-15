@@ -360,3 +360,58 @@ func TestText_ManifestLineWithWorkflowCommandIsNeutralised(t *testing.T) {
 		}
 	}
 }
+
+func TestDiff_NullSideIsTreatedAsMissing(t *testing.T) {
+	removed := change(model.StatusRemoved, "gone", nil)
+	removed.New = json.RawMessage("null")
+	added := change(model.StatusAdded, "fresh", nil)
+	added.Old = json.RawMessage("null")
+
+	for name, c := range map[string]model.Change{"removed": removed, "added": added} {
+		result := model.Result{Changes: []model.Change{c}}
+		md, _ := Markdown(result, MarkdownOptions{})
+		for format, out := range map[string]string{"markdown": md, "text": Text(result)} {
+			if strings.Contains(out, "null") {
+				t.Errorf("%s/%s output contains a null line:\n%s", name, format, out)
+			}
+		}
+	}
+
+	if got := manifestLines(json.RawMessage(" null ")); got != nil {
+		t.Errorf("manifestLines(null) = %v, want nil", got)
+	}
+}
+
+func TestDiff_RemovedHasOnlyMinusAndAddedOnlyPlus(t *testing.T) {
+	removed := model.Result{Changes: []model.Change{change(model.StatusRemoved, "gone", nil)}}
+	added := model.Result{Changes: []model.Change{change(model.StatusAdded, "fresh", nil)}}
+
+	for format, out := range map[string]string{"markdown": mustMarkdown(removed), "text": Text(removed)} {
+		if hasLineWithPrefix(out, "+") {
+			t.Errorf("removed %s output has a + line:\n%s", format, out)
+		}
+	}
+	for format, out := range map[string]string{"markdown": mustMarkdown(added), "text": Text(added)} {
+		if hasLineWithPrefix(out, "-") {
+			t.Errorf("added %s output has a - line:\n%s", format, out)
+		}
+	}
+}
+
+// hasLineWithPrefix reports whether a diff body line starts with prefix,
+// ignoring the "--- " file header of the text format.
+func hasLineWithPrefix(out, prefix string) bool {
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasPrefix(line, prefix) && !strings.HasPrefix(line, "--- ") {
+			return true
+		}
+	}
+
+	return false
+}
+
+func mustMarkdown(result model.Result) string {
+	body, _ := Markdown(result, MarkdownOptions{})
+
+	return body
+}
