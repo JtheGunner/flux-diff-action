@@ -44,6 +44,12 @@ inputs:
     description: Maximum comment length in characters. Longer diffs are truncated and uploaded as an artifact.
     required: false
     default: "65000"
+  flate-timeout:
+    description: >-
+      Maximum run time of each flate process, for example 10m or 90s. A hung
+      flate is killed and reported as a failed run in the comment.
+    required: false
+    default: 10m
   fail-on-error:
     description: Fail the step when flux-diff reports failed units. By default a warning is shown and the step succeeds.
     required: false
@@ -64,6 +70,7 @@ runs:
         INPUT_FLATE_VERSION: ${{ inputs.flate-version }}
         INPUT_MAX_SIZE: ${{ inputs.max-comment-size }}
         INPUT_FAIL_ON_ERROR: ${{ inputs.fail-on-error }}
+        INPUT_FLATE_TIMEOUT: ${{ inputs.flate-timeout }}
         INPUT_CONFIG: ${{ inputs.config }}
         EVENT_NAME: ${{ github.event_name }}
       run: |
@@ -74,6 +81,7 @@ runs:
         [[ "$INPUT_FLATE_VERSION" =~ $semver ]] || { echo "::error::flate-version must look like v1.2.3"; exit 1; }
         [[ "$INPUT_MAX_SIZE" =~ ^[0-9]{1,6}$ ]] || { echo "::error::max-comment-size must be a number"; exit 1; }
         [[ "$INPUT_FAIL_ON_ERROR" =~ ^(true|false)$ ]] || { echo "::error::fail-on-error must be true or false"; exit 1; }
+        [[ "$INPUT_FLATE_TIMEOUT" =~ ^[1-9][0-9]{0,3}[smh]$ ]] || { echo "::error::flate-timeout must be a positive duration such as 90s, 10m or 1h"; exit 1; }
         [[ "$INPUT_CONFIG" =~ ^[A-Za-z0-9._][A-Za-z0-9._/-]*$ && "$INPUT_CONFIG" != *..* ]] || { echo "::error::config must be a relative file name"; exit 1; }
         [[ "$EVENT_NAME" == "pull_request" ]] || { echo "::error::flux-diff only supports the pull_request event"; exit 1; }
 
@@ -132,6 +140,7 @@ runs:
         MERGE_BASE: ${{ steps.event.outputs.base }}
         REGISTRY_CONFIG: ${{ inputs.registry-config }}
         MAX_SIZE: ${{ inputs.max-comment-size }}
+        FLATE_TIMEOUT: ${{ inputs.flate-timeout }}
       run: |
         # The runner starts bash with -e; this step must survive a failing
         # flux-diff to record its exit code, so errexit is switched off.
@@ -140,7 +149,7 @@ runs:
         dir="${RUNNER_TEMP}/flux-diff-action"
         base="${BASE_OVERRIDE:-$MERGE_BASE}"
         args=(--path "$MANIFEST_PATH" --base "$base" --config-base-rev "$base" --config-name "$CONFIG_NAME"
-          --flate-binary "$dir/flate/flate" --format markdown --max-size "$MAX_SIZE"
+          --flate-binary "$dir/flate/flate" --format markdown --max-size "$MAX_SIZE" --flate-timeout "$FLATE_TIMEOUT"
           --output "$dir/comment.md" --full-output "$dir/full-diff.md")
         [ -z "$REGISTRY_CONFIG" ] || args+=(--registry-config "$REGISTRY_CONFIG")
         # The report goes to a file, never to the job log: the runner treats log

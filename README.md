@@ -100,6 +100,7 @@ Main flags of the diff command:
 | ✂️ | `--max-size`, `--output`, `--full-output` | truncation and output files |
 | 🚦 | `--strict` | also exit 1 when units are only partially rendered or broken in base and head |
 | 🔧 | `--flate-binary` | flate executable to run (default `flate` from `PATH`) |
+| ⏱️ | `--flate-timeout` | maximum run time of each flate process (default `10m`) |
 
 Run `flux-diff --help` for the complete list.
 
@@ -147,6 +148,7 @@ jobs:
 | 🔀 | `base` | merge base | revision to compare against |
 | 🔑 | `registry-config` | none | registry credentials file passed to flate |
 | ✂️ | `max-comment-size` | `65000` | longer diffs are truncated and uploaded as the `flux-diff-full` artifact |
+| ⏱️ | `flate-timeout` | `10m` | maximum run time of each flate process; a hung flate is killed and reported as a failed run |
 | 🚦 | `fail-on-error` | `false` | fail the step when units failed; otherwise only a warning |
 
 The step output `outcome` is `created`, `updated` or `step-summary`.
@@ -231,6 +233,11 @@ Honest limits:
 - **Partial units.** A unit that cannot be fully rendered is reported as
   `partial` or `failed` with a reason. It is never dropped or shown as "no
   changes". Use `--strict` or `fail-on-error` to turn them into failures.
+- **Hung flate.** Each flate process (version check, diff, build) is limited to
+  `flate-timeout` (default 10 minutes). A process that runs longer is killed and
+  the comment reports the run as failed with the reason, instead of the job
+  hanging until its own time limit. Raise `flate-timeout` for repositories that
+  render very large Helm charts; set the job's `timeout-minutes` above it.
 - **SOPS is not diffable.** Only ciphertext is available, so changes inside
   encrypted values cannot be shown.
 - **Free-form messages** (warnings, failure reasons, stderr lines) contain

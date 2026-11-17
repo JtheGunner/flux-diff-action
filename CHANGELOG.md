@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `flate-timeout` input and `--flate-timeout` flag (default 10 minutes) limit the
+  run time of each flate process. A hung flate is killed and the comment reports
+  the run as failed with the reason, instead of the job hanging until its own
+  time limit with no comment.
+
 ## [0.2.0] - 2026-11-16
 
 ### Added

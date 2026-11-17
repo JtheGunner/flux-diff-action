@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/JtheGunner/flux-diff-action/internal/model"
 )
@@ -363,5 +364,86 @@ func TestRun_DoesNotPassFlateEnvironmentToTheProcess(t *testing.T) {
 	}
 	if !sawKept || !sawPath {
 		t.Error("non-FLATE variables (FAKE_KEEP_ME, PATH) were dropped")
+	}
+}
+
+// hangingFlate writes a fake flate that answers --version and then hangs. With
+// orphan, the hang is a child process that keeps flate's pipes open after
+// flate itself was killed, like a stuck helper.
+func hangingFlate(t *testing.T, orphan bool) string {
+	t.Helper()
+
+	hang := "exec sleep 30"
+	if orphan {
+		hang = "sleep 30"
+	}
+	script := `#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "flate version ` + MinVersion + `"
+  exit 0
+fi
+` + hang + "\n"
+	path := filepath.Join(t.TempDir(), "flate")
+	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
+		t.Fatalf("write fake binary: %v", err)
+	}
+
+	return path
+}
+
+func TestRun_HangingFlate_FailsWithTimeoutError(t *testing.T) {
+	binary := hangingFlate(t, false)
+
+	started := time.Now()
+	_, err := Run(context.Background(), Options{Binary: binary, Path: ".", Timeout: 200 * time.Millisecond})
+
+	if !errors.Is(err, ErrTimeout) {
+		t.Fatalf("error = %v, want ErrTimeout", err)
+	}
+	if !strings.Contains(err.Error(), "200ms") {
+		t.Errorf("error %q does not name the timeout", err)
+	}
+	if elapsed := time.Since(started); elapsed > 10*time.Second {
+		t.Errorf("Run took %s, want it to stop shortly after the timeout", elapsed)
+	}
+}
+
+func TestBuild_HangingFlate_FailsWithTimeoutError(t *testing.T) {
+	binary := hangingFlate(t, false)
+
+	_, err := Build(context.Background(), Options{Binary: binary, Path: ".", Timeout: 200 * time.Millisecond})
+	if !errors.Is(err, ErrTimeout) {
+		t.Fatalf("error = %v, want ErrTimeout", err)
+	}
+}
+
+func TestRun_OrphanedChildHoldingPipes_DoesNotBlockTheTimeout(t *testing.T) {
+	binary := hangingFlate(t, true)
+
+	started := time.Now()
+	_, err := Run(context.Background(), Options{Binary: binary, Path: ".", Timeout: 200 * time.Millisecond})
+
+	if !errors.Is(err, ErrTimeout) {
+		t.Fatalf("error = %v, want ErrTimeout", err)
+	}
+	if elapsed := time.Since(started); elapsed > 15*time.Second {
+		t.Errorf("Run took %s, want it to stop within the pipe grace period", elapsed)
+	}
+}
+
+func TestRun_CancelledContext_IsNotReportedAsTimeout(t *testing.T) {
+	binary := hangingFlate(t, false)
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(200*time.Millisecond, cancel)
+
+	_, err := Run(ctx, Options{Binary: binary, Path: ".", Timeout: time.Minute})
+	if err == nil || errors.Is(err, ErrTimeout) {
+		t.Fatalf("error = %v, want a cancellation that is not ErrTimeout", err)
+	}
+}
+
+func TestRun_DefaultTimeoutApplies(t *testing.T) {
+	if DefaultTimeout != 10*time.Minute {
+		t.Errorf("DefaultTimeout = %s, want 10m", DefaultTimeout)
 	}
 }

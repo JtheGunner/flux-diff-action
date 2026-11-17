@@ -128,6 +128,9 @@ func TestAction_VersionIsRequiredAndFailOnErrorDefaultsOff(t *testing.T) {
 	if action.Inputs["fail-on-error"].Default != "false" || action.Inputs["max-comment-size"].Default != "65000" {
 		t.Error("unexpected defaults for fail-on-error or max-comment-size")
 	}
+	if action.Inputs["flate-timeout"].Default != "10m" {
+		t.Error("flate-timeout must default to 10m")
+	}
 }
 
 func commentLineWith(text, needle string) string {
@@ -255,7 +258,7 @@ func TestAction_ReportResultWarnsByDefaultAndFailsOnRequest(t *testing.T) {
 func TestAction_ValidateInputsAcceptsPreReleaseTagsOnly(t *testing.T) {
 	base := map[string]string{
 		"INPUT_FLATE_VERSION": "v0.7.3", "INPUT_MAX_SIZE": "65000", "INPUT_FAIL_ON_ERROR": "false",
-		"INPUT_CONFIG": ".flux-diff.yaml", "EVENT_NAME": "pull_request",
+		"INPUT_FLATE_TIMEOUT": "10m", "INPUT_CONFIG": ".flux-diff.yaml", "EVENT_NAME": "pull_request",
 	}
 	cases := map[string]int{
 		"v0.1.0": 0, "v0.1.0-rc.1": 0, "v1.2.3-beta": 0,

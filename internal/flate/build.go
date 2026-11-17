@@ -38,7 +38,7 @@ func Build(ctx context.Context, opts Options) ([]model.BrokenUnit, error) {
 		binary = defaultBinary
 	}
 
-	if err := checkVersion(ctx, binary); err != nil {
+	if err := checkVersion(ctx, binary, opts.timeout()); err != nil {
 		return nil, err
 	}
 
@@ -52,7 +52,7 @@ func Build(ctx context.Context, opts Options) ([]model.BrokenUnit, error) {
 		return nil, fmt.Errorf("refusing to run flate: %w", err)
 	}
 
-	_, stderr, exitCode, err := execute(ctx, binary, args, false)
+	_, stderr, exitCode, err := execute(ctx, binary, args, false, opts.timeout())
 	if err != nil {
 		return nil, err
 	}
