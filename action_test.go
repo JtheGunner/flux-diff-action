@@ -408,7 +408,7 @@ func TestAction_InstallFluxDiffVerifiesTheChecksumBeforeExtracting(t *testing.T)
 func TestAction_RenderDiffRecordsAFailingExitCodeAndSucceeds(t *testing.T) {
 	run := runStep(t, "Render diff", 1, map[string]string{
 		"MANIFEST_PATH": ".", "CONFIG_NAME": ".flux-diff.yaml", "BASE_OVERRIDE": "",
-		"MERGE_BASE": strings.Repeat("a", 40), "REGISTRY_CONFIG": "", "MAX_SIZE": "65000",
+		"MERGE_BASE": strings.Repeat("a", 40), "REGISTRY_CONFIG": "", "MAX_SIZE": "65000", "FLATE_TIMEOUT": "10m",
 	})
 
 	if run.exitCode != 0 {
