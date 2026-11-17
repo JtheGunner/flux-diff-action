@@ -173,12 +173,12 @@ stringData:
 YAML
 
 git add -A
-git commit -qm "base"
+git -c commit.gpgsign=false commit -qm "base"
 
 # The head commit changes one Helm value, so the rendered HelmRelease differs.
 sed -i.bak 's/snapshotsEnabled: true/snapshotsEnabled: false/' velero/helmrelease.yaml
 rm velero/helmrelease.yaml.bak
-git commit -qam "head: disable snapshots in the Velero values"
+git -c commit.gpgsign=false commit -qam "head: disable snapshots in the Velero values"
 
 echo "Repository created in $target"
 echo "Running: $flate diff --base HEAD~1 --supply supply.yaml (limit ${limit}s)"
