@@ -8,6 +8,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -38,6 +39,9 @@ type runOptions struct {
 	format      string
 	config      string
 	flateBinary string
+	// flateTimeout bounds each flate process; a hung process is killed and
+	// reported as a failed run.
+	flateTimeout time.Duration
 	// registryConfig comes from the trusted command line and may be absolute;
 	// it is only passed to flate as a path.
 	registryConfig string
@@ -69,6 +73,9 @@ func (o runOptions) validate() error {
 	if o.configBaseRev != "" && o.config != "" {
 		return errors.New("--config and --config-base-rev cannot be combined")
 	}
+	if o.flateTimeout <= 0 {
+		return errors.New("--flate-timeout must be positive")
+	}
 	if o.fullOutput != "" && o.format != formatMarkdown {
 		return errors.New("--full-output needs --format markdown")
 	}
@@ -92,6 +99,7 @@ func addRunFlags(cmd *cobra.Command, opts *runOptions) {
 	flags.StringVar(&opts.fullOutput, "full-output", "", "with --format markdown, write the untruncated report to this file when --max-size cut the output")
 	flags.StringVar(&opts.registryConfig, "registry-config", "", "registry credentials file passed to flate; the only way to supply registry credentials; may be an absolute path")
 	flags.StringVar(&opts.flateBinary, "flate-binary", "flate", "flate executable to run")
+	flags.DurationVar(&opts.flateTimeout, "flate-timeout", flate.DefaultTimeout, "maximum run time of each flate process; a hung flate is killed and reported as failed")
 }
 
 func runDiff(ctx context.Context, opts runOptions, out io.Writer) error {
@@ -115,15 +123,19 @@ func runDiff(ctx context.Context, opts runOptions, out io.Writer) error {
 	}
 
 	raw, err := flate.Run(ctx, flate.Options{
-		Binary: opts.flateBinary, Path: opts.path, Base: opts.base, Args: cfg.FlateArgs(),
+		Binary: opts.flateBinary, Path: opts.path, Base: opts.base, Args: cfg.FlateArgs(), Timeout: opts.flateTimeout,
 	})
-	if err != nil {
+	if errors.Is(err, flate.ErrTimeout) {
+		raw = timeoutResult("diff", opts.flateTimeout)
+	} else if err != nil {
 		return fmt.Errorf("run flate: %w", err)
-	}
-
-	raw.BrokenInBothSides, err = findBrokenInBothSides(ctx, opts, cfg, raw)
-	if err != nil {
-		return err
+	} else {
+		raw.BrokenInBothSides, err = findBrokenInBothSides(ctx, opts, cfg, raw)
+		if errors.Is(err, flate.ErrTimeout) {
+			raw.Failures = append(raw.Failures, timeoutFailure("build", opts.flateTimeout))
+		} else if err != nil {
+			return err
+		}
 	}
 
 	// Mask before anything is formatted, written or put into an error.
@@ -146,13 +158,29 @@ func runDiff(ctx context.Context, opts runOptions, out io.Writer) error {
 // head failures the diff did not report are those units.
 func findBrokenInBothSides(ctx context.Context, opts runOptions, cfg config.Config, diff model.Result) ([]model.BrokenUnit, error) {
 	built, err := flate.Build(ctx, flate.Options{
-		Binary: opts.flateBinary, Path: opts.path, Args: cfg.BuildArgs(),
+		Binary: opts.flateBinary, Path: opts.path, Args: cfg.BuildArgs(), Timeout: opts.flateTimeout,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("run flate build: %w", err)
 	}
 
 	return flate.BrokenInBothSides(diff.Failures, built), nil
+}
+
+// timeoutResult is the outcome of a run whose flate process was killed after
+// the timeout: nothing was rendered, which must never read as "no changes".
+func timeoutResult(step string, timeout time.Duration) model.Result {
+	return model.Result{Failures: []model.Failure{timeoutFailure(step, timeout)}}
+}
+
+// timeoutFailure names the flate step that timed out. Its text is built here,
+// never from flate output, so it carries nothing that needs masking.
+func timeoutFailure(step string, timeout time.Duration) model.Failure {
+	return model.Failure{
+		Kind:   "flate",
+		Name:   step,
+		Reason: fmt.Sprintf("timed out after %s; the result is incomplete. Re-run the job or raise the flate timeout", timeout),
+	}
 }
 
 // loadConfig reads the explicit --config file (which must exist) or, without

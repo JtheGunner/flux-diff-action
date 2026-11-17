@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 var update = flag.Bool("update", false, "rewrite golden files")
@@ -290,5 +291,87 @@ func TestCLI_UnsupportedFlagValues(t *testing.T) {
 				t.Errorf("error = %v, want containing %q", err, tc.want)
 			}
 		})
+	}
+}
+
+// hangingFlate answers --version and then hangs.
+func hangingFlate(t *testing.T) string {
+	t.Helper()
+
+	script := `#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "flate v0.7.3"
+  exit 0
+fi
+exec sleep 30
+`
+	path := filepath.Join(t.TempDir(), "flate")
+	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
+		t.Fatalf("write fake binary: %v", err)
+	}
+
+	return path
+}
+
+func TestCLI_HangingFlate_ReportsFailedResultAndStillWritesTheComment(t *testing.T) {
+	binary := hangingFlate(t)
+	output := filepath.Join(t.TempDir(), "comment.md")
+
+	started := time.Now()
+	_, err := execute(t, "--flate-binary", binary, "--flate-timeout", "300ms", "--output", output)
+
+	if err == nil || !strings.Contains(err.Error(), "timed out") {
+		t.Fatalf("error = %v, want a timeout failure", err)
+	}
+	if elapsed := time.Since(started); elapsed > 10*time.Second {
+		t.Errorf("run took %s, want it to stop shortly after the timeout", elapsed)
+	}
+
+	comment, readErr := os.ReadFile(output)
+	if readErr != nil {
+		t.Fatalf("the comment must be written when flate times out: %v", readErr)
+	}
+	for _, want := range []string{"timed out after 300ms", "flate"} {
+		if !strings.Contains(string(comment), want) {
+			t.Errorf("comment does not contain %q:\n%s", want, comment)
+		}
+	}
+	if strings.Contains(string(comment), "No changes") {
+		t.Errorf("a timed-out run must not read as clean:\n%s", comment)
+	}
+}
+
+func TestCLI_HangingBuild_IsReportedAndKeepsTheDiff(t *testing.T) {
+	binary := fakeFlate(t, "changes.json", "", "0")
+	script := "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo 'flate v0.7.3'; exit 0; fi\n" +
+		"if [ \"$1\" = \"build\" ]; then exec sleep 30; fi\n" +
+		"cat \"$FAKE_FLATE_STDOUT\"\n"
+	if err := os.WriteFile(binary, []byte(script), 0o700); err != nil {
+		t.Fatalf("write fake binary: %v", err)
+	}
+	output := filepath.Join(t.TempDir(), "comment.md")
+
+	_, err := execute(t, "--flate-binary", binary, "--flate-timeout", "300ms", "--output", output)
+	if err == nil || !strings.Contains(err.Error(), "timed out") {
+		t.Fatalf("error = %v, want a timeout failure", err)
+	}
+
+	comment, readErr := os.ReadFile(output)
+	if readErr != nil {
+		t.Fatalf("read comment: %v", readErr)
+	}
+	if !strings.Contains(string(comment), "timed out after 300ms") {
+		t.Errorf("comment misses the timeout:\n%s", comment)
+	}
+}
+
+func TestCLI_FlateTimeoutMustBePositive(t *testing.T) {
+	binary := fakeFlate(t, "changes.json", "", "0")
+
+	for _, value := range []string{"0s", "-1m"} {
+		_, err := execute(t, "--flate-binary", binary, "--flate-timeout", value)
+		if err == nil || !strings.Contains(err.Error(), "--flate-timeout") {
+			t.Errorf("--flate-timeout %s: error = %v, want a validation error", value, err)
+		}
 	}
 }

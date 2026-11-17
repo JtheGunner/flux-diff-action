@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/JtheGunner/flux-diff-action/internal/guard"
 	"github.com/JtheGunner/flux-diff-action/internal/model"
@@ -26,6 +27,11 @@ const (
 	defaultBinary = "flate"
 	// maxOutputBytes bounds how much of each stream is kept in memory.
 	maxOutputBytes = 256 << 20
+	// DefaultTimeout bounds each flate process when Options.Timeout is unset.
+	DefaultTimeout = 10 * time.Minute
+	// killGracePeriod is how long Wait waits for the output pipes to close
+	// after flate was killed, so a child that inherited them cannot block it.
+	killGracePeriod = 5 * time.Second
 )
 
 var (
@@ -36,6 +42,9 @@ var (
 	ErrVersionTooOld = errors.New("flate version is below the supported minimum")
 	// ErrOutputTooLarge means flate printed more than the supported amount.
 	ErrOutputTooLarge = errors.New("flate output exceeds the size limit")
+	// ErrTimeout means a flate process ran longer than Options.Timeout and was
+	// killed.
+	ErrTimeout = errors.New("flate timed out")
 )
 
 // Options configures one flate run.
@@ -48,6 +57,17 @@ type Options struct {
 	Base string
 	// Args are extra flate flags appended after the generated ones.
 	Args []string
+	// Timeout bounds each flate process (version check, diff, build);
+	// DefaultTimeout when zero.
+	Timeout time.Duration
+}
+
+func (o Options) timeout() time.Duration {
+	if o.Timeout <= 0 {
+		return DefaultTimeout
+	}
+
+	return o.Timeout
 }
 
 // Run executes `flate diff -o json` and returns the parsed result.
@@ -67,7 +87,7 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 		binary = defaultBinary
 	}
 
-	if err := checkVersion(ctx, binary); err != nil {
+	if err := checkVersion(ctx, binary, opts.timeout()); err != nil {
 		return Result{}, err
 	}
 
@@ -76,7 +96,7 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 		return Result{}, fmt.Errorf("refusing to run flate: %w", err)
 	}
 
-	stdout, stderr, exitCode, err := execute(ctx, binary, args, true)
+	stdout, stderr, exitCode, err := execute(ctx, binary, args, true, opts.timeout())
 	if err != nil {
 		return Result{}, err
 	}
@@ -107,8 +127,8 @@ func buildArgs(opts Options) []string {
 	return append(args, opts.Args...)
 }
 
-func checkVersion(ctx context.Context, binary string) error {
-	stdout, _, exitCode, err := execute(ctx, binary, []string{"--version"}, true)
+func checkVersion(ctx context.Context, binary string, timeout time.Duration) error {
+	stdout, _, exitCode, err := execute(ctx, binary, []string{"--version"}, true, timeout)
 	if err != nil {
 		return err
 	}
@@ -136,12 +156,17 @@ func checkVersion(ctx context.Context, binary string) error {
 
 // execute runs the binary and returns its streams and exit code. A non-zero
 // exit code is not an error; failing to start or finish the process is.
-// Without keepStdout, stdout is discarded unread and returned empty.
-func execute(ctx context.Context, binary string, args []string, keepStdout bool) (stdout, stderr []byte, exitCode int, err error) {
+// Without keepStdout, stdout is discarded unread and returned empty. A process
+// still running after timeout is killed and reported as ErrTimeout.
+func execute(ctx context.Context, binary string, args []string, keepStdout bool, timeout time.Duration) (stdout, stderr []byte, exitCode int, err error) {
 	var outBuf, errBuf limitedBuffer
 	outBuf.limit, errBuf.limit = maxOutputBytes, maxOutputBytes
 
-	cmd := exec.CommandContext(ctx, binary, args...)
+	runCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(runCtx, binary, args...)
+	cmd.WaitDelay = killGracePeriod
 	cmd.Env = environmentWithoutFlateVariables(os.Environ())
 	if keepStdout {
 		cmd.Stdout = &outBuf
@@ -150,6 +175,9 @@ func execute(ctx context.Context, binary string, args []string, keepStdout bool)
 
 	runErr := cmd.Run()
 
+	if ctx.Err() == nil && errors.Is(runCtx.Err(), context.DeadlineExceeded) {
+		return nil, nil, 0, fmt.Errorf("%w after %s", ErrTimeout, timeout)
+	}
 	if ctx.Err() != nil {
 		return nil, nil, 0, fmt.Errorf("flate run aborted: %w", ctx.Err())
 	}
